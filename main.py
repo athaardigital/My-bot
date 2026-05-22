@@ -1,37 +1,42 @@
 import os
 import json
+import threading
 from datetime import datetime
 
-from flask import Flask, request
+from flask import Flask
 from dotenv import load_dotenv
 
 import telebot
 from telebot import types
 
-# ======================================
+# =====================================
 # تحميل المتغيرات
-# ======================================
+# =====================================
 
 load_dotenv()
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 if not BOT_TOKEN:
-    raise Exception("BOT TOKEN NOT FOUND")
-
-if not WEBHOOK_URL:
-    raise Exception("WEBHOOK URL NOT FOUND")
+    raise Exception("TOKEN NOT FOUND")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-app = Flask(__name__)
-
 DATA_FILE = "groups_data.json"
 
-# ======================================
-# تحميل البيانات
-# ======================================
+# =====================================
+# Flask
+# =====================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running", 200
+
+# =====================================
+# البيانات
+# =====================================
 
 def load_data():
 
@@ -58,9 +63,9 @@ def save_data(data):
             indent=2
         )
 
-# ======================================
+# =====================================
 # بيانات المجموعة
-# ======================================
+# =====================================
 
 def default_group():
 
@@ -69,8 +74,6 @@ def default_group():
         "message_id": None,
 
         "list_open": False,
-
-        "created_date": datetime.now().strftime("%Y/%m/%d"),
 
         "readers": [],
 
@@ -95,9 +98,9 @@ def get_group(chat_id):
 
     return data, data[chat_id]
 
-# ======================================
-# التحقق من الإشراف
-# ======================================
+# =====================================
+# الأدمن
+# =====================================
 
 def is_admin(user_id, chat_id):
 
@@ -116,19 +119,19 @@ def is_admin(user_id, chat_id):
     except:
         return False
 
-# ======================================
-# منشن آمن
-# ======================================
+# =====================================
+# المنشن
+# =====================================
 
 def mention(user_id, name):
 
-    safe_name = name.replace("[", "").replace("]", "")
+    safe_name = name.replace("<", "").replace(">", "")
 
     return f"<a href='tg://user?id={user_id}'>{safe_name}</a>"
 
-# ======================================
-# إنشاء اللوحة
-# ======================================
+# =====================================
+# اللوحة
+# =====================================
 
 def make_board(chat_id):
 
@@ -145,14 +148,14 @@ def make_board(chat_id):
     text = (
         f"📅 <b>التاريخ:</b> {today}\n\n"
 
-        "اعلمي رعاكِ الله أنَّ حضوركِ لمجالس العلم "
-        "هو محضُ انتقاءٍ وتوفيقٍ من الله، "
-        "فأحسني رعاية هذه النعمة واحمدي الله عليها.\n\n"
+        "اعلمي رعاكِ الله أنَّ حضوركِ "
+        "لمجالس العلم هو محضُ انتقاءٍ "
+        "وتوفيقٍ من الله "
+        "فأحسني رعاية هذه النعمة "
+        "واحمدي الله عليها.\n\n"
     )
 
-    # ==================================
     # القارئات
-    # ==================================
 
     text += "━━━━━━━━━━━━━━━\n"
     text += f"📖 <b>القارئات</b> ({len(group['readers'])})\n\n"
@@ -182,9 +185,7 @@ def make_board(chat_id):
 
     text += "\n"
 
-    # ==================================
     # المستمعات
-    # ==================================
 
     text += "━━━━━━━━━━━━━━━\n"
     text += f"🎧 <b>المستمعات</b> ({len(group['listeners'])})\n\n"
@@ -200,23 +201,14 @@ def make_board(chat_id):
             start=1
         ):
 
-            done = (
-                " ✅"
-                if str(member["id"]) in group["completed"]
-                else ""
-            )
-
             text += (
                 f"{i}. "
-                f"{mention(member['id'], member['name'])}"
-                f"{done}\n"
+                f"{mention(member['id'], member['name'])}\n"
             )
 
     text += "\n"
 
-    # ==================================
     # المعتذرات
-    # ==================================
 
     text += "━━━━━━━━━━━━━━━\n"
     text += f"🌿 <b>المعتذرات</b> ({len(group['excused'])})\n\n"
@@ -232,16 +224,9 @@ def make_board(chat_id):
             start=1
         ):
 
-            done = (
-                " ✅"
-                if str(member["id"]) in group["completed"]
-                else ""
-            )
-
             text += (
                 f"{i}. "
-                f"{mention(member['id'], member['name'])}"
-                f"{done}\n"
+                f"{mention(member['id'], member['name'])}\n"
             )
 
     text += "\n━━━━━━━━━━━━━━━\n"
@@ -249,9 +234,9 @@ def make_board(chat_id):
 
     return text
 
-# ======================================
-# الأزرار الأساسية
-# ======================================
+# =====================================
+# الأزرار
+# =====================================
 
 def main_keyboard(chat_id, user_id):
 
@@ -263,25 +248,25 @@ def main_keyboard(chat_id, user_id):
 
         types.InlineKeyboardButton(
             "📝 تسجيل اسمي",
-            callback_data="register_reader"
+            callback_data="reader"
         ),
 
         types.InlineKeyboardButton(
-            "🎧 تسجيل مستمعة",
-            callback_data="register_listener"
+            "🎧 مستمعة",
+            callback_data="listener"
         )
     )
 
     keyboard.add(
 
         types.InlineKeyboardButton(
-            "🌿 تسجيل معتذرة",
-            callback_data="register_excused"
+            "🌿 معتذرة",
+            callback_data="excused"
         ),
 
         types.InlineKeyboardButton(
             "🗑️ حذف اسمي",
-            callback_data="delete_name"
+            callback_data="delete"
         )
     )
 
@@ -305,9 +290,9 @@ def main_keyboard(chat_id, user_id):
 
     return keyboard
 
-# ======================================
-# أزرار الإعدادات
-# ======================================
+# =====================================
+# الإعدادات
+# =====================================
 
 def settings_keyboard(chat_id):
 
@@ -319,15 +304,13 @@ def settings_keyboard(chat_id):
         else "🔓 فتح القائمة"
     )
 
-    keyboard = types.InlineKeyboardMarkup(
-        row_width=1
-    )
+    keyboard = types.InlineKeyboardMarkup()
 
     keyboard.add(
 
         types.InlineKeyboardButton(
             state_button,
-            callback_data="toggle_list"
+            callback_data="toggle"
         )
     )
 
@@ -343,7 +326,7 @@ def settings_keyboard(chat_id):
 
         types.InlineKeyboardButton(
             "📢 المناداة",
-            callback_data="call_all"
+            callback_data="call"
         )
     )
 
@@ -357,9 +340,9 @@ def settings_keyboard(chat_id):
 
     return keyboard
 
-# ======================================
+# =====================================
 # تحديث اللوحة
-# ======================================
+# =====================================
 
 def update_board(chat_id, user_id):
 
@@ -392,43 +375,35 @@ def update_board(chat_id, user_id):
 
         print(e)
 
-# ======================================
-# إزالة العضوة
-# ======================================
+# =====================================
+# حذف العضوة
+# =====================================
 
 def remove_member(group, user_id):
 
     group["readers"] = [
-
         x for x in group["readers"]
-
         if str(x["id"]) != str(user_id)
     ]
 
     group["listeners"] = [
-
         x for x in group["listeners"]
-
         if str(x["id"]) != str(user_id)
     ]
 
     group["excused"] = [
-
         x for x in group["excused"]
-
         if str(x["id"]) != str(user_id)
     ]
 
-# ======================================
-# /start
-# ======================================
+# =====================================
+# start
+# =====================================
 
 @bot.message_handler(commands=["start"])
 def start(message):
 
-    # ==============================
     # الخاص
-    # ==============================
 
     if message.chat.type == "private":
 
@@ -440,17 +415,16 @@ def start(message):
 
             "حيَّاكِ الله.\n\n"
 
-            "انشري البوت فضلًا، "
+            "انشري البوت فضلًا "
             "فهو صدقةٌ عنِّي وعن والديَّ "
-            "ومقرأتِنا وكلِّ المسلمين والمسلمات "
-            "والمؤمنين والمؤمنات الأحياء منهم والأموات."
+            "ومقرأتنا وكل المسلمين والمسلمات "
+            "والمؤمنين والمؤمنات "
+            "الأحياء منهم والأموات."
         )
 
         return
 
-    # ==============================
     # المجموعة
-    # ==============================
 
     data = load_data()
 
@@ -478,9 +452,9 @@ def start(message):
 
     save_data(data)
 
-# ======================================
-# جميع الأزرار
-# ======================================
+# =====================================
+# الأزرار
+# =====================================
 
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
@@ -497,23 +471,19 @@ def callbacks(call):
         full_name += f" {user.last_name}"
 
     member = {
-
         "id": str(user.id),
-
         "name": full_name
     }
 
-    # ==================================
-    # تسجيل قارئة
-    # ==================================
+    # قارئة
 
-    if call.data == "register_reader":
+    if call.data == "reader":
 
         if not group["list_open"]:
 
             bot.answer_callback_query(
                 call.id,
-                "القائمة مغلقة حالياً."
+                "القائمة مغلقة."
             )
 
             return
@@ -522,76 +492,25 @@ def callbacks(call):
 
         group["readers"].append(member)
 
-        save_data(data)
+    # مستمعة
 
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تم تسجيلكِ قارئة."
-        )
-
-    # ==================================
-    # تسجيل مستمعة
-    # ==================================
-
-    elif call.data == "register_listener":
-
-        if not group["list_open"]:
-
-            bot.answer_callback_query(
-                call.id,
-                "القائمة مغلقة حالياً."
-            )
-
-            return
+    elif call.data == "listener":
 
         remove_member(group, user.id)
 
         group["listeners"].append(member)
 
-        save_data(data)
+    # معتذرة
 
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تم تسجيلكِ مستمعة."
-        )
-
-    # ==================================
-    # تسجيل معتذرة
-    # ==================================
-
-    elif call.data == "register_excused":
+    elif call.data == "excused":
 
         remove_member(group, user.id)
 
         group["excused"].append(member)
 
-        save_data(data)
+    # حذف
 
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تم تسجيلكِ معتذرة."
-        )
-
-    # ==================================
-    # حذف الاسم
-    # ==================================
-
-    elif call.data == "delete_name":
+    elif call.data == "delete":
 
         remove_member(group, user.id)
 
@@ -602,42 +521,9 @@ def callbacks(call):
             if str(x) != str(user.id)
         ]
 
-        save_data(data)
-
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تم حذف اسمكِ."
-        )
-
-    # ==================================
     # تم الفراغ
-    # ==================================
 
     elif call.data == "done":
-
-        exists = any(
-
-            str(x["id"]) == str(user.id)
-
-            for x in (
-                group["readers"] +
-                group["listeners"]
-            )
-        )
-
-        if not exists:
-
-            bot.answer_callback_query(
-                call.id,
-                "سجلي اسمكِ أولاً."
-            )
-
-            return
 
         if str(user.id) not in group["completed"]:
 
@@ -645,21 +531,7 @@ def callbacks(call):
                 str(user.id)
             )
 
-            save_data(data)
-
-            update_board(
-                call.message.chat.id,
-                user.id
-            )
-
-        bot.answer_callback_query(
-            call.id,
-            "بارك الله فيكِ."
-        )
-
-    # ==================================
     # الإعدادات
-    # ==================================
 
     elif call.data == "settings":
 
@@ -680,11 +552,11 @@ def callbacks(call):
             )
         )
 
-    # ==================================
-    # فتح وإغلاق
-    # ==================================
+        return
 
-    elif call.data == "toggle_list":
+    # فتح وإغلاق
+
+    elif call.data == "toggle":
 
         if not is_admin(
             user.id,
@@ -696,45 +568,15 @@ def callbacks(call):
             not group["list_open"]
         )
 
-        save_data(data)
-
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تم تحديث حالة القائمة."
-        )
-
-    # ==================================
     # تحديث
-    # ==================================
 
     elif call.data == "refresh":
 
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
+        pass
 
-        bot.answer_callback_query(
-            call.id,
-            "تم تحديث القائمة."
-        )
-
-    # ==================================
     # إعادة ضبط
-    # ==================================
 
     elif call.data == "reset":
-
-        if not is_admin(
-            user.id,
-            call.message.chat.id
-        ):
-            return
 
         old_message = group["message_id"]
 
@@ -746,38 +588,13 @@ def callbacks(call):
             "message_id"
         ] = old_message
 
-        save_data(data)
-
-        update_board(
-            call.message.chat.id,
-            user.id
-        )
-
-        bot.answer_callback_query(
-            call.id,
-            "تمت إعادة ضبط القائمة."
-        )
-
-    # ==================================
     # المناداة
-    # ==================================
 
-    elif call.data == "call_all":
-
-        if not is_admin(
-            user.id,
-            call.message.chat.id
-        ):
-            return
-
-        sent_count = 0
+    elif call.data == "call":
 
         all_members = (
-
             group["readers"] +
-
             group["listeners"] +
-
             group["excused"]
         )
 
@@ -786,59 +603,30 @@ def callbacks(call):
             try:
 
                 bot.send_message(
-
                     int(member["id"]),
-
                     "هلمُّوا لمجلسٍ تحفُّه الملائكة 🌿"
                 )
-
-                sent_count += 1
 
             except:
                 pass
 
-        bot.answer_callback_query(
-            call.id,
-            f"تم إرسال {sent_count}"
-        )
+    save_data(data)
 
-# ======================================
-# Flask
-# ======================================
-
-@app.route("/")
-def home():
-    return "Bot is running", 200
-
-@app.route(
-    f"/{BOT_TOKEN}",
-    methods=["POST"]
-)
-def webhook():
-
-    json_str = request.get_data().decode(
-        "UTF-8"
+    update_board(
+        call.message.chat.id,
+        user.id
     )
 
-    update = telebot.types.Update.de_json(
-        json_str
+    bot.answer_callback_query(
+        call.id,
+        "تم."
     )
 
-    bot.process_new_updates([update])
+# =====================================
+# تشغيل Flask
+# =====================================
 
-    return "OK", 200
-
-# ======================================
-# تشغيل البوت
-# ======================================
-
-bot.remove_webhook()
-
-bot.set_webhook(
-    url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-)
-
-if __name__ == "__main__":
+def run_flask():
 
     port = int(
         os.environ.get("PORT", 10000)
@@ -847,4 +635,20 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
+    )
+
+# =====================================
+# التشغيل
+# =====================================
+
+if __name__ == "__main__":
+
+    flask_thread = threading.Thread(
+        target=run_flask
+    )
+
+    flask_thread.start()
+
+    bot.infinity_polling(
+        skip_pending=True
     )
