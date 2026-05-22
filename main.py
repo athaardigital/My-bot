@@ -615,11 +615,16 @@ def webhook():
 # تشغيل
 # =========================
 
-bot.remove_webhook()
+@app.before_first_request
+def activate_webhook():
 
-bot.set_webhook(
-    url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-)
+    bot.remove_webhook()
+
+    bot.set_webhook(
+        url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    )
+
+    print("Webhook activated")
 
 if __name__ == "__main__":
 
@@ -630,4 +635,4 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-            )
+    )
