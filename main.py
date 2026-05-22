@@ -1,227 +1,270 @@
 import os
-import logging
+import threading
 import json
-from datetime import datetime
+from flask import Flask
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+import telebot
+from telebot import types
 
-# 1. إعداد نظام السجلات (Logging)
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler("bot_errors.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# تحميل متغيرات البيئة
+# تحميل متغيرات البيئة من ملف .env محلياً إن وجد
 load_dotenv()
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
 
-DATA_FILE = "quran_recitation_data.json"
+# جلب توكن البوت من المتغيرات البيئية
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
-# 2. إدارة قاعدة البيانات المحلية وحفظها تلقائياً في ملف JSON لحمايتها من إعادة تشغيل خادم Render
-def load_database() -> dict:
+DATA_FILE = "recitation_data.json"
+
+def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
-                return {int(k): v for k, v in raw_data.items()}
-        except Exception as e:
-            logger.error(f"خطأ أثناء قراءة ملف قاعدة البيانات: {e}")
-    return {}
+                return json.load(f)
+        except Exception:
+            pass
+    return {"members": [], "read": [], "list_open": False}
 
-def save_database(database: dict):
+def save_data(data):
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(database, f, ensure_ascii=False, indent=4)
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"خطأ أثناء حفظ قاعدة البيانات: {e}")
+        print(f"[خطأ في حفظ البيانات] {e}")
 
-groups_database = load_database()
-
-def get_group_data(chat_id: int) -> dict:
-    if chat_id not in groups_database:
-        groups_database[chat_id] = {"members": [], "read": []}
-        save_database(groups_database)
-    return groups_database[chat_id]
-
-# 3. التحقق من صلاحيات المسؤول
-async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    if ADMIN_ID and str(user_id) == str(ADMIN_ID):
-        return True
+def is_admin(user_id: int, chat_id: int) -> bool:
     try:
-        chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-        return chat_member.status in [ChatMember.OWNER, ChatMember.ADMINISTRATOR]
-    except Exception:
+        # إذا كان الحساب خاص بالمنشئ الأساسي مباشرة
+        member = bot.get_chat_member(chat_id, user_id)
+        return member.status in ("administrator", "creator")
+    except Exception as e:
+        print(f"[خطأ في التحقق من الإشراف] {e}")
         return False
 
-# 4. بناء واجهة الأزرار التفاعلية (Inline Keyboard)
-def build_keyboard(is_admin_user: bool) -> InlineKeyboardMarkup:
-    keyboard = [
-        [
-            InlineKeyboardButton("📝 تَسْجِيلُ دَوْرِي", callback_data="register_turn"),
-            InlineKeyboardButton("✅ فَرَغْتُ مِنَ الْقِرَاءَةِ", callback_data="finish_read")
-        ],
-        [
-            InlineKeyboardButton("📢 نِدَاءُ الْحَلَقَةِ", callback_data="call_members")
-        ]
-    ]
-    # أزرار الإشراف تظهر للمسؤولين فقط
-    if is_admin_user:
-        keyboard.append([InlineKeyboardButton("🔄 إِعَادَةُ ضَبْطِ الْقَائِمَةِ", callback_data="reset_list")])
-        
-    return InlineKeyboardMarkup(keyboard)
-
-# 5. بناء نص القائمة والإحصائيات للمجموعات
-def build_list_text(chat_id: int) -> str:
-    group_data = get_group_data(chat_id)
-    members = group_data.get("members", [])
-    read_list = group_data.get("read", [])
+def get_keyboard(user_id: int, chat_id: int, list_open: bool):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
-    if not members:
-        return "📋 <b>قَائِمَةُ التَّلَاوَةِ الْحَالِيَّةِ:</b>\n\n<i>الْقَائِمَةُ فَارِغَةٌ تَمَاماً حَالِيّاً، بَانْتِظَارِ تَسْجِيلِ الْمُشْتَرِكَاتِ.</i>"
-        
-    lines = ["📋 <b>قَائِمَةُ تِلَاوَةِ الْقُرْآنِ الْكَرِيمِ:</b>\n"]
-    for i, member in enumerate(members, 1):
-        uid = member["id"]
-        status = "✅ قَرَأَتْ" if uid in read_list else "⏳ فِي الِانْتِظَارِ"
-        lines.append(f"{i}. {status} ── {member['name']}")
-        
-    total = len(members)
-    read_count = len(read_list)
-    lines.append(f"\n📈 <b>الْإِحْصَائِيَّاتُ الحَالِيَّةُ: {read_count} مِنْ أَصْلِ {total} خَتَمْنَ الْوِرْدَ</b>")
-    return "\n".join(lines)
-
-# 6. معالجة الأوامر
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-    
-    # أولاً: إذا كان الإرسال في الخاص (Private Chat)
-    if chat.type == "private":
-        welcome_private = (
-            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ.\n\n"
-            "هَذَا الْبُوتُ صَدَقَةٌ عَنِّي وَوَالِدَيَّ وَعَنْ مَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ "
-            "وَالْمُؤْمِنِينَ وَالْمُؤْمِنَاتِ الْأَحْيَاءِ مِنْهُمْ وَالْأَمْوَاتِ.\n\n"
-            "📌 <b>تَنْبِيهٌ:</b> يَرْجَى إِضَافَةُ الْبُوتِ إِلَى الْمَجْمُوعَةِ لِتَبْدَأَ حَلَقَاتُ التَّلَاوَةِ."
-        )
-        await update.message.reply_text(welcome_private, parse_mode="HTML")
-        return
-        
-    # ثانياً: إذا كان الإرسال داخل المجموعة
-    admin_status = await is_user_admin(update, context)
-    list_text = build_list_text(chat.id)
-    await update.message.reply_text(
-        list_text,
-        parse_mode="HTML",
-        reply_markup=build_keyboard(admin_status)
+    markup.add(
+        types.KeyboardButton("📝 تسجيل اسمي"),
+        types.KeyboardButton("🗑️ حذف اسمي"),
+        types.KeyboardButton("✅ تم الفراغ من القراءة"),
+        types.KeyboardButton("📖 عرض القائمة")
     )
+    
+    if is_admin(user_id, chat_id):
+        if list_open:
+            markup.add(types.KeyboardButton("🔒 إغلاق القائمة"))
+        else:
+            markup.add(types.KeyboardButton("🔓 فتح القائمة للمؤلفين"))
+        markup.add(types.KeyboardButton("🔄 إعادة ضبط القائمة"))
+        
+    return markup
 
-# 7. معالجة ضغطات الأزرار (Callback Queries)
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    chat_id = query.message.chat.id
-    user = query.from_user
-    user_id = user.id
-    user_name = user.first_name.replace("<", "&lt;").replace(">", "&gt;")
-    
-    group_data = get_group_data(chat_id)
-    await query.answer() # إغلاق مؤشر التحميل على الزر
-    
-    # أ. زر تسجيل الدور
-    if query.data == "register_turn":
-        existing = next((m for m in group_data["members"] if m["id"] == user_id), None)
+def safe_reply(message, text, parse_mode=None):
+    try:
+        data = load_data()
+        bot.send_message(
+            message.chat.id,
+            text,
+            parse_mode=parse_mode,
+            reply_markup=get_keyboard(
+                message.from_user.id,
+                message.chat.id,
+                data["list_open"]
+            )
+        )
+    except Exception as e:
+        print(f"[خطأ في إرسال الرسالة] {e}")
+
+@bot.message_handler(commands=["start", "help"])
+def send_welcome(message):
+    try:
+        data = load_data()
+        admin_hint = ""
+        if is_admin(message.from_user.id, message.chat.id):
+            admin_hint = "\n\n🔑 *لديكِ صلاحيات الإشراف.* يمكنكِ التحكم في فتح وإغلاق وإعادة ضبط القائمة عبر الأزرار المظهرة لكِ."
+            
+        welcome_text = (
+            "✨ *مرحباً بكِ في بوت إدارة قائمة التلاوة الجماعية* ✨\n\n"
+            "يسعدنا تنظيم وردكِ القرآني وتسهيل الختمات المشتركة. الرجاء استخدام الأزرار أدناه للتفاعل مع القائمة."
+            + admin_hint
+        )
+        bot.send_message(
+            message.chat.id,
+            welcome_text,
+            parse_mode="Markdown",
+            reply_markup=get_keyboard(
+                message.from_user.id, message.chat.id, data["list_open"]
+            )
+        )
+    except Exception as e:
+        print(f"[خطأ في أمر البداية] {e}")
+
+@bot.message_handler(func=lambda msg: msg.text == "📝 تسجيل اسمي")
+def register_name(message):
+    try:
+        data = load_data()
+        user = message.from_user
+        name = user.first_name
+        if user.last_name:
+            name += f" {user.last_name}"
+        user_id = str(user.id)
+
+        existing = next((m for m in data["members"] if m["id"] == user_id), None)
         if existing:
-            await query.answer(text=f"أَنْتِ مُسَجَّلَةٌ بِالْفِعْلِ فِي الْقَائِمَةِ يَا أُخْتِي.", show_alert=True)
-            return
-            
-        group_data["members"].append({"id": user_id, "name": user.first_name})
-        save_database(groups_database)
-        
-        # ظهور رسالة منبثقة على شاشة المستخدم فقط
-        await query.answer(
-            text="رَعَاكِ اللَّهُ كُونِي عَلَى الْمَوْعِدِ وَالْتَزِمِي بِدَوْرِكِ، يُؤْنِسُنَا وَالْمَلَائِكَةَ انْضِمَامُكِ لِمَجْلِسِنَا.",
-            show_alert=True
-        )
-        # تحديث القائمة في المجموعة فوراً
-        admin_status = await is_user_admin(update, context)
-        await query.edit_message_text(text=build_list_text(chat_id), parse_mode="HTML", reply_markup=build_keyboard(admin_status))
+            safe_reply(message, f"أنتِ مسجلة بالفعل في القائمة باسم: *{existing['name']}*.", parse_mode="Markdown")
+        else:
+            data["members"].append({"id": user_id, "name": name})
+            save_data(data)
+            safe_reply(message, f"✅ تم تسجيل الأخت *{name}* في قائمة التلاوة بنجاح!", parse_mode="Markdown")
+    except Exception as e:
+        print(f"[خطأ في التسجيل] {e}")
 
-    # ب. زر الفراغ من القراءة
-    elif query.data == "finish_read":
-        member = next((m for m in group_data["members"] if m["id"] == user_id), None)
+@bot.message_handler(func=lambda msg: msg.text == "🗑️ حذف اسمي")
+def delete_name(message):
+    try:
+        data = load_data()
+        user_id = str(message.from_user.id)
+        member = next((m for m in data["members"] if m["id"] == user_id), None)
+
         if not member:
-            await query.answer(text="عُذْراً، يَجِبُ تَسْجِيلُ اسْمِكِ فِي الْقَائِمَةِ أَوَّلاً عَبْرَ زِرِّ التَّسْجِيلِ.", show_alert=True)
+            safe_reply(message, "اسمكِ غير مدرج في القائمة حالياً لتتم إزالته.")
+        else:
+            data["members"] = [m for m in data["members"] if m["id"] != user_id]
+            data["read"] = [r for r in data["read"] if r != user_id]
+            save_data(data)
+            safe_reply(message, f"🗑️ تم حذف الاسم *{member['name']}* من القائمة بناءً على طلبكِ.", parse_mode="Markdown")
+    except Exception as e:
+        print(f"[خطأ في الحذف] {e}")
+
+@bot.message_handler(func=lambda msg: msg.text == "✅ تم الفراغ من القراءة")
+def mark_read(message):
+    try:
+        data = load_data()
+        if not data["list_open"]:
+            safe_reply(message, "تنبيه: قائمة التلاوة مغلقة حالياً من قِبل المشرفات.")
             return
-            
-        if user_id in group_data["read"]:
-            await query.answer(text="لَقَدْ تَمَّ تَسْجِيلُ قِرَاءَتِكِ مِثْلَ ذِي قَبْلُ.", show_alert=True)
+
+        user_id = str(message.from_user.id)
+        member = next((m for m in data["members"] if m["id"] == user_id), None)
+
+        if not member:
+            safe_reply(message, "عذراً، يجب تسجيل اسمكِ في القائمة أولاً عبر الزر المخصص قبل تأكيد القراءة.")
+        elif user_id in data["read"]:
+            safe_reply(
+                message,
+                f"لقد تم تسجيل قراءتكِ مسبقاً للدورة الحالية يا *{member['name']}*. جزاكِ الله خيراً!",
+                parse_mode="Markdown"
+            )
+        else:
+            data["read"].append(user_id)
+            save_data(data)
+            safe_reply(
+                message,
+                f"✅ بارك الله فيكِ يا *{member['name']}*، تم تسجيل ختم وردكِ الحالي بنجاح.",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        print(f"[خطأ في تأكيد القراءة] {e}")
+
+@bot.message_handler(func=lambda msg: msg.text == "📖 عرض القائمة")
+def show_list(message):
+    try:
+        data = load_data()
+        if not data["members"]:
+            safe_reply(message, "القائمة فارغة تماماً حالياً، بانتظار تسجيل المشتركات.")
             return
-            
-        group_data["read"].append(user_id)
-        save_database(groups_database)
-        
-        # ظهور نافذة منبثقة للمستخدم بالثناء
-        await query.answer(
-            text=f"بَارَكَ اللَّهُ فِيكِ يَا أُخْتِي، تَمَّتْ إِضَافَتُكِ إِلَى حَلَقَةِ التَّلَاوَةِ بِنَجَاحٍ. جَعَلَكِ اللَّهُ مِنْ أَهْلِ الْقُرْآنِ.",
-            show_alert=True
+
+        lines = ["📖 *قائمة تلاوة القرآن الكريم*\n"]
+        for i, member in enumerate(data["members"], 1):
+            uid = member["id"]
+            status = "✅ قرأت" if uid in data["read"] else "⏳ في الانتظار"
+            lines.append(f"{i}. {status} ── {member['name']}")
+
+        total = len(data["members"])
+        read_count = len(data["read"])
+        lines.append(f"\n📈 *الإحصائيات الحالية: {read_count} من أصل {total} ختمن الورد*")
+        status_text = "🟢 مفتوحة" if data["list_open"] else "🔴 مغلقة"
+        lines.append(f"حالة القائمة الحالية: *{status_text}*")
+
+        safe_reply(message, "\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        print(f"[خطأ في عرض القائمة] {e}")
+
+@bot.message_handler(func=lambda msg: msg.text in ["🔓 فتح القائمة للمؤلفين", "🔒 إغلاق القائمة"])
+def toggle_list(message):
+    try:
+        if not is_admin(message.from_user.id, message.chat.id):
+            safe_reply(message, "⛔ عذراً، هذا الإجراء مقتصر على مشرفات المجموعة فقط لحماية التنظيم.")
+            return
+
+        data = load_data()
+        if data["list_open"]:
+            data["list_open"] = False
+            data["read"] = []
+            save_data(data)
+            safe_reply(
+                message,
+                "🔒 تم إغلاق قائمة التلاوة بنجاح، وتصفير علامات القراءة تمهيداً للدورة القادمة.",
+                parse_mode="Markdown"
+            )
+        else:
+            data["list_open"] = True
+            save_data(data)
+            safe_reply(
+                message,
+                "🔓 تم فتح قائمة التلاوة! يمكن لجميع المشتركات المسجلات الآن البدء بتسجيل القراءة.",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        print(f"[خطأ في تبديل حالة القائمة] {e}")
+
+@bot.message_handler(func=lambda msg: msg.text == "🔄 إعادة ضبط القائمة")
+def reset_list(message):
+    try:
+        if not is_admin(message.from_user.id, message.chat.id):
+            safe_reply(message, "⛔ عذراً، إعادة ضبط وتصفير القائمة بالكامل متاح للمشرفات فقط.")
+            return
+
+        data = load_data()
+        data["members"] = []
+        data["read"] = []
+        data["list_open"] = False
+        save_data(data)
+        safe_reply(
+            message,
+            "🔄 تم مسح القائمة بالكامل وتفريغ الأسماء وإعادة ضبط البيانات لابتداء ختمة جديدة.",
+            parse_mode="Markdown"
         )
-        admin_status = await is_user_admin(update, context)
-        await query.edit_message_text(text=build_list_text(chat_id), parse_mode="HTML", reply_markup=build_keyboard(admin_status))
+    except Exception as e:
+        print(f"[خطأ في إعادة الضبط] {e}")
 
-    # ج. زر نداء الحلقة (المنشن التلقائي لجميع العضوات)
-    elif query.data == "call_members":
-        members = group_data.get("members", [])
-        if not members:
-            await query.answer(text="الْقَائِمَةُ فَارِغَةٌ حَالِيّاً، لَا يُوجَدُ مَنْ نُنَادِي عَلَيْهِ.", show_alert=True)
-            return
-            
-        mentions = []
-        for m in members:
-            clean_name = m["name"].replace("<", "&lt;").replace(">", "&gt;")
-            mentions.append(f'<a href="tg://user?id={m["id"]}">{clean_name}</a>')
-            
-        mention_text = "📢 <b>هَلُمُّوا لِمَجْلِسٍ تَحُفُّهُ الْمَلَائِكَةُ!</b>\n\n" + " ".join(mentions)
-        await context.bot.send_message(chat_id=chat_id, text=mention_text, parse_mode="HTML")
+flask_app = Flask(__name__)
 
-    # د. زر إعادة ضبط القائمة (خاص بالمشرفات)
-    elif query.data == "reset_list":
-        if not await is_user_admin(update, context):
-            await query.answer(text="⛔ عُذْراً، هَذَا الْإِجْرَاءُ مَقْصُورٌ عَلَى مُشْرِفَاتِ الْمَجْمُوعَةِ فَقَطْ.", show_alert=True)
-            return
-            
-        group_data["members"] = []
-        group_data["read"] = []
-        save_database(groups_database)
-        
-        await query.answer(text="🔄 تَمَّتْ إِعادةُ ضَبْطِ الْقَائِمَةِ وَتَصْفِيرِ الْبَياناتِ لِخَتْمَةٍ جَدِيدَةٍ.", show_alert=True)
-        await query.edit_message_text(text=build_list_text(chat_id), parse_mode="HTML", reply_markup=build_keyboard(True))
+@flask_app.route("/")
+def home():
+    return "Athaar Recitation Bot is active and running perfectly!", 200
 
-# 8. نقطة الانطلاق والتشغيل (Main Configuration)
-def main():
-    if not BOT_TOKEN:
-        print("❌ خطأ: لم يتم العثور على TOKEN الخاص بالبوت في متغيرات البيئة!")
-        return
+@flask_app.route("/health")
+def health():
+    return "OK", 200
 
-    application = Application.builder().token(BOT_TOKEN).build()
+def run_flask():
+    # جعل المنفذ ديناميكياً ليتناسب مع متطلبات خوادم الويب المجانية
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
 
-    # تسجيل معالجات الأوامر والضغطات
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(handle_buttons))
-
-    print("🚀 البوت المبارك يعمل الآن وجاهز لخدمة المقرأة...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+def exception_handler(exc):
+    print(f"[خطأ في الاتصال المستمر] {exc}")
 
 if __name__ == "__main__":
-    main()
+    print("جاري تشغيل بوت التلاوة لمشروع آثار الرقمية...")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("تم تفعيل خادم Flask للحفاظ على استمرارية البوت وسد ثغرة المنفذ.")
+   bot.infinity_polling()
+
+و هذا اخر كود للمكتبة
+pyTelegramBotAPI==4.12.0
+Flask==3.0.0
+python-dotenv==1.0.1
+و ذا رابطهhttps://my-bot-0z5k.onrender.com
