@@ -23,6 +23,12 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# حل مشكلة التعارض (Conflict 409): إزالة الويب هوك القديم لتفعيل الـ Polling بنجاح
+try:
+    bot.remove_webhook()
+except Exception as webhook_error:
+    print(f"Warning: Could not remove webhook: {webhook_error}")
+
 DATA_FILE = "groups_data.json"
 file_lock = threading.Lock()  # قفل أمني لمنع تداخل العمليات وتلف ملف البيانات
 
@@ -233,7 +239,6 @@ def start(message):
     data, group = get_group(message.chat.id)
     chat_id_str = str(message.chat.id)
 
-    # مسح اللوحة القديمة إن وجدت وبناء لوحة نظيفة جديدة
     data[chat_id_str] = default_group()
     
     sent = bot.send_message(
@@ -259,14 +264,12 @@ def callbacks(call):
     
     data, group = get_group(chat_id)
 
-    # إعداد الاسم الكامل للعضوة بشكل نظيف
     full_name = user.first_name or "مستخدمة"
     if user.last_name:
         full_name += f" {user.last_name}"
 
     member = {"id": user_id_str, "name": full_name}
 
-    # القائمة العامة للأزرار التي تتطلب صلاحيات مشرف الإعدادات
     admin_actions = ["settings", "toggle", "reset", "call"]
 
     if call.data in admin_actions:
@@ -388,4 +391,3 @@ if __name__ == "__main__":
     flask_thread.start()
 
     bot.infinity_polling(skip_pending=True)
-
