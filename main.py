@@ -23,14 +23,13 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# حل مشكلة التعارض (Conflict 409): إزالة الويب هوك القديم لتفعيل الـ Polling بنجاح
 try:
     bot.remove_webhook()
 except Exception as webhook_error:
     print(f"Warning: Could not remove webhook: {webhook_error}")
 
 DATA_FILE = "groups_data.json"
-file_lock = threading.Lock()  # قفل أمني لمنع تداخل العمليات وتلف ملف البيانات
+file_lock = threading.Lock()
 
 # =====================================
 # Flask Configuration
@@ -65,30 +64,51 @@ def save_data(data):
         print(f"Error saving data: {e}")
 
 # =====================================
-# هيكلية بيانات المجموعات
+# هيكلية بيانات المجموعات والتحديث
 # =====================================
 
 def default_group():
     return {
         "message_id": None,
         "list_open": False,
-        "readers": [],
-        "listeners": [],
-        "excused": [],
-        "completed": []
+        "extra_roles_open": False,
+        "readers": [],   # {"id": str, "name": str, "done": bool}
+        "listeners": [], # {"id": str, "name": str}
+        "excused": []    # {"id": str, "name": str}
     }
 
 def get_group(chat_id):
     data = load_data()
     chat_id = str(chat_id)
+    
     if chat_id not in data:
         data[chat_id] = default_group()
         save_data(data)
-    return data, data[chat_id]
+    else:
+        # ترقية البيانات القديمة للتوافق مع التحديث الجديد
+        changed = False
+        group = data[chat_id]
+        if "extra_roles_open" not in group:
+            group["extra_roles_open"] = False
+            changed = True
+        
+        if "completed" in group:
+            completed_ids = group["completed"]
+            for r in group.get("readers", []):
+                if "done" not in r:
+                    r["done"] = (str(r["id"]) in completed_ids)
+            del group["completed"]
+            changed = True
+            
+        for r in group.get("readers", []):
+            if "done" not in r:
+                r["done"] = False
+                changed = True
+                
+        if changed:
+            save_data(data)
 
-# =====================================
-# التحقق من الصلاحيات
-# =====================================
+    return data, data[chat_id]
 
 def is_admin(user_id, chat_id):
     try:
@@ -97,13 +117,15 @@ def is_admin(user_id, chat_id):
     except Exception:
         return False
 
-# =====================================
-# إنشاء المنشن الآمن
-# =====================================
-
 def mention(user_id, name):
     safe_name = html.escape(name)
     return f"<a href='tg://user?id={user_id}'>{safe_name}</a>"
+
+def get_arabic_date():
+    ar_days = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+    ar_months = ["جانفي", "فيفري", "مارس", "أفريل", "ماي", "جوان", "جويلية", "أوت", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+    now = datetime.now()
+    return f"{ar_days[now.weekday()]} {now.day} {ar_months[now.month - 1]} {now.year} م"
 
 # =====================================
 # بناء لوحة العرض الرئيسية
@@ -111,49 +133,53 @@ def mention(user_id, name):
 
 def make_board(chat_id):
     _, group = get_group(chat_id)
-    today = datetime.now().strftime("%Y/%m/%d")
-    state = "🟢 مفتوحة" if group["list_open"] else "🔴 مغلقة"
+    
+    text = f"📅 {get_arabic_date()}\n\n"
+    text += "📊 إحصاء المجلس الحالي:\n"
+    text += "⏳ ---------------------------------- ⏳\n\n"
+    
+    text += "❝ اعلمي رعاك الله أن حضورك مجالس العلم النافع\n"
+    text += "هو محض اصطفاء من ربك فحمديه على هذه النعمة\n"
+    text += "وأحسني رعايتها ❞\n\n"
+    
+    text += "⏳ ---------------------------------- ⏳\n\n"
+    text += "✨ قَائِمَةُ تِلَاوَةِ الْقُرْآنِ الْكَرِيمِ لِلْمَجْلِسِ الْحَالِيِّ ✨\n\n"
 
-    text = (
-        f"📅 <b>التاريخ:</b> {today}\n\n"
-        "اعلمي رعاكِ الله أنَّ حضوركِ لمجالس العلم هو محضُ انتقاءٍ "
-        "وتوفيقٍ من الله، فأحسني رعاية هذه النعمة واحمدي الله عليها.\n\n"
-    )
-
-    # قسم القارئات
-    text += "━━━━━━━━━━━━━━━\n"
-    text += f"📖 <b>القارئات</b> ({len(group['readers'])})\n\n"
-    if not group["readers"]:
-        text += "لا يوجد.\n"
+    # القارئات
+    text += f"📖 القَارِئَاتُ: {len(group['readers'])}\n"
+    if not group['readers']:
+        text += "لا يوجد قارئات حالياً\n"
     else:
-        for i, member in enumerate(group["readers"], start=1):
-            done = " ✅" if str(member["id"]) in group["completed"] else ""
-            text += f"{i}. {mention(member['id'], member['name'])}{done}\n"
-
+        for i, r in enumerate(group['readers'], 1):
+            done_str = " ✅ قرأت" if r.get("done") else ""
+            text += f"{i}. {mention(r['id'], r['name'])}{done_str}\n"
     text += "\n"
 
-    # قسم المستمعات
-    text += "━━━━━━━━━━━━━━━\n"
-    text += f"🎧 <b>المستمعات</b> ({len(group['listeners'])})\n\n"
-    if not group["listeners"]:
-        text += "لا يوجد.\n"
+    # المستمعات
+    text += f"🎧 المُسْتَمِعَاتُ: {len(group['listeners'])}\n"
+    if not group['listeners']:
+        text += "لا يوجد مستمعات حالياً\n"
     else:
-        for i, member in enumerate(group["listeners"], start=1):
-            text += f"{i}. {mention(member['id'], member['name'])}\n"
-
+        for i, l in enumerate(group['listeners'], 1):
+            text += f"{i}. {mention(l['id'], l['name'])}\n"
     text += "\n"
 
-    # قسم المعتذرات
-    text += "━━━━━━━━━━━━━━━\n"
-    text += f"🌿 <b>المعتذرات</b> ({len(group['excused'])})\n\n"
-    if not group["excused"]:
-        text += "لا يوجد.\n"
+    # المعتذرات
+    text += f"❌ المُعْتَذِرَاتُ: {len(group['excused'])}\n"
+    if not group['excused']:
+        text += "لا يوجد معتذرات حالياً\n"
     else:
-        for i, member in enumerate(group["excused"], start=1):
-            text += f"{i}. {mention(member['id'], member['name'])}\n"
+        for i, e in enumerate(group['excused'], 1):
+            text += f"{i}. {mention(e['id'], e['name'])}\n"
+    
+    text += "\n----------------------------------------------\n"
+    
+    status_list = "🟢 مفتوحة" if group['list_open'] else "🔴 مغلقة"
+    status_extra = "🟢 مفتوحة" if group['extra_roles_open'] else "🔴 مغلقة"
+    
+    text += f"حالة القائمة: {status_list}\n"
+    text += f"الأدوار الإضافية: {status_extra}"
 
-    text += "\n━━━━━━━━━━━━━━━\n"
-    text += f"🔒 <b>حالة القائمة:</b> {state}"
     return text
 
 # =====================================
@@ -161,37 +187,51 @@ def make_board(chat_id):
 # =====================================
 
 def main_keyboard():
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("📝 تسجيل اسمي", callback_data="reader"),
+    keyboard = types.InlineKeyboardMarkup()
+    
+    keyboard.row(
+        types.InlineKeyboardButton("حذف آخر دور 🗑️", callback_data="delete_last"),
+        types.InlineKeyboardButton("تسجيل اسمي 📝", callback_data="reader")
+    )
+    # أزرار المستمعة والمعتذرة مدمجة للمحافظة على الوظيفة مع الشكل
+    keyboard.row(
+        types.InlineKeyboardButton("❌ معتذرة", callback_data="excused"),
         types.InlineKeyboardButton("🎧 مستمعة", callback_data="listener")
     )
-    keyboard.add(
-        types.InlineKeyboardButton("🌿 معتذرة", callback_data="excused"),
-        types.InlineKeyboardButton("🗑️ حذف اسمي", callback_data="delete")
-    )
-    keyboard.add(
+    keyboard.row(
         types.InlineKeyboardButton("✅ تم الفراغ من القراءة", callback_data="done")
     )
-    keyboard.add(
-        types.InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")
+    keyboard.row(
+        types.InlineKeyboardButton("⚙️ إعدادات المشرفات", callback_data="settings")
     )
     return keyboard
 
 def settings_keyboard(chat_id):
     _, group = get_group(chat_id)
-    state_button = "🔒 إغلاق القائمة" if group["list_open"] else "🔓 فتح القائمة"
-
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(types.InlineKeyboardButton(state_button, callback_data="toggle"))
-    keyboard.add(types.InlineKeyboardButton("📖 تحديث اللوحة", callback_data="refresh"))
-    keyboard.add(types.InlineKeyboardButton("📢 المناداة", callback_data="call"))
-    keyboard.add(types.InlineKeyboardButton("🔄 إعادة الضبط", callback_data="reset"))
-    keyboard.add(types.InlineKeyboardButton("🔙 عودة للوحة الرئيسية", callback_data="back_to_main"))
+    
+    btn_list = "إغلاق القائمة 🔒" if group["list_open"] else "فتح القائمة 🔓"
+    btn_extra = "إغلاق الأدوار 🔒" if group["extra_roles_open"] else "فتح الأدوار الإضافية 🔓"
+    
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.row(
+        types.InlineKeyboardButton(btn_extra, callback_data="toggle_extra"),
+        types.InlineKeyboardButton(btn_list, callback_data="toggle_list")
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("الإحصاء النهائي 📊", callback_data="final_stats"),
+        types.InlineKeyboardButton("زر المناداة 📢", callback_data="call")
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("تحديث وإعادة إرسال 🔄", callback_data="resend"),
+        types.InlineKeyboardButton("تصفير القائمة 🔄", callback_data="reset")
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("عودة للمجلس ↩️", callback_data="back_to_main")
+    )
     return keyboard
 
 # =====================================
-# تحديث اللوحة في المجموعات
+# تحديث اللوحة
 # =====================================
 
 def update_board(chat_id):
@@ -208,18 +248,8 @@ def update_board(chat_id):
             disable_web_page_preview=True,
             reply_markup=main_keyboard()
         )
-    except Exception as e:
-        print(f"Error updating board: {e}")
-
-# =====================================
-# تنظيف العضوة من القوائم
-# =====================================
-
-def remove_member(group, user_id):
-    uid = str(user_id)
-    group["readers"] = [x for x in group["readers"] if str(x["id"]) != uid]
-    group["listeners"] = [x for x in group["listeners"] if str(x["id"]) != uid]
-    group["excused"] = [x for x in group["excused"] if str(x["id"]) != uid]
+    except Exception:
+        pass
 
 # =====================================
 # استجابة الأمر /start
@@ -231,8 +261,8 @@ def start(message):
         bot.send_message(
             message.chat.id,
             "السلام عليكم ورحمة الله وبركاته\n\n"
-            "حيَّاكِ الله.\n\n"
-            "انشري البوت فضلًا فهو صدقةٌ عنِّي وعن والديَّ ومقرأتنا وكل المسلمين والمسلمات الأحياء منهم والأموات."
+            "حيَّاكم الله.\n\n"
+            "📌 أنشروا البوت فضلًا فهو صدقةٌ عنِّي وعن والديَّ ومقرأتنا وكل المسلمين والمسلمات الأحياء منهم والأموات."
         )
         return
 
@@ -256,6 +286,15 @@ def start(message):
 # معالجة الأزرار التفاعلية
 # =====================================
 
+def remove_from_others(group, user_id_str, keep_in=""):
+    """دالة مساعدة لمسح العضوة من القوائم الأخرى عند التبديل"""
+    if keep_in != "listeners":
+        group["listeners"] = [x for x in group["listeners"] if str(x["id"]) != user_id_str]
+    if keep_in != "excused":
+        group["excused"] = [x for x in group["excused"] if str(x["id"]) != user_id_str]
+    if keep_in != "readers":
+        group["readers"] = [x for x in group["readers"] if str(x["id"]) != user_id_str]
+
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
     chat_id = call.message.chat.id
@@ -268,102 +307,221 @@ def callbacks(call):
     if user.last_name:
         full_name += f" {user.last_name}"
 
-    member = {"id": user_id_str, "name": full_name}
+    member_base = {"id": user_id_str, "name": full_name}
 
-    admin_actions = ["settings", "toggle", "reset", "call"]
+    admin_actions = ["settings", "toggle_list", "toggle_extra", "reset", "call", "final_stats", "resend"]
 
     if call.data in admin_actions:
         if not is_admin(user.id, chat_id):
             bot.answer_callback_query(call.id, "❌ عذرًا، هذا الإجراء متاح للمشرفات فقط.", show_alert=True)
             return
 
-    # 1. تسجيل قارئة
+    # 1. تسجيل اسمي (قارئة)
     if call.data == "reader":
         if not group["list_open"]:
             bot.answer_callback_query(call.id, "⚠️ القائمة مغلقة حاليًا من قِبل الإدارة.", show_alert=True)
             return
-        remove_member(group, user.id)
-        group["readers"].append(member)
-        bot.answer_callback_query(call.id, "✅ تم تسجيلكِ كقارئة.")
+            
+        user_entries = [r for r in group["readers"] if str(r["id"]) == user_id_str]
+        
+        if not user_entries:
+            # أول مرة تسجل في هذا المجلس
+            remove_from_others(group, user_id_str, "readers")
+            new_entry = member_base.copy()
+            new_entry["done"] = False
+            group["readers"].append(new_entry)
+            bot.answer_callback_query(call.id, "✅ تم تسجيلكِ كقارئة.")
+        else:
+            # تملك دوراً سابقاً (نظام الأدوار الإضافية)
+            if not group["extra_roles_open"]:
+                bot.answer_callback_query(call.id, "⚠️ الأدوار الإضافية مغلقة حاليًا.", show_alert=True)
+                return
+                
+            last_entry = user_entries[-1]
+            if not last_entry["done"]:
+                bot.answer_callback_query(call.id, "⚠️ لا يمكنكِ أخذ دور إضافي قبل الفراغ من دورك الحالي وتحديد (✅ تم الفراغ).", show_alert=True)
+                return
+                
+            new_entry = member_base.copy()
+            new_entry["done"] = False
+            group["readers"].append(new_entry)
+            bot.answer_callback_query(call.id, "✅ تم تسجيل دور إضافي لكِ.")
 
-    # 2. تسجيل مستمعة
+    # 2. مستمعة
     elif call.data == "listener":
-        remove_member(group, user.id)
-        group["listeners"].append(member)
+        remove_from_others(group, user_id_str, "listeners")
+        group["listeners"].append(member_base)
         bot.answer_callback_query(call.id, "🎧 تم تسجيلكِ كمستمعة.")
 
-    # 3. تسجيل معتذرة
+    # 3. معتذرة
     elif call.data == "excused":
-        remove_member(group, user.id)
-        group["excused"].append(member)
-        bot.answer_callback_query(call.id, "🌿 تم تسجيل اعتذاركِ.")
+        remove_from_others(group, user_id_str, "excused")
+        group["excused"].append(member_base)
+        bot.answer_callback_query(call.id, "❌ تم تسجيل اعتذاركِ.")
 
-    # 4. حذف الاسم
-    elif call.data == "delete":
-        remove_member(group, user.id)
-        group["completed"] = [x for x in group["completed"] if str(x) != user_id_str]
-        bot.answer_callback_query(call.id, "🗑️ تم حذف اسمكِ من القائمة.")
-
-    # 5. تم الفراغ من القراءة
+    # 4. تم الفراغ من القراءة
     elif call.data == "done":
-        is_reader = any(str(x["id"]) == user_id_str for x in group["readers"])
-        if not is_reader:
-            bot.answer_callback_query(call.id, "⚠️ يجب تسجيل اسمكِ كقارئة أولًا لإنهاء القراءة!", show_alert=True)
+        user_entries = [r for r in group["readers"] if str(r["id"]) == user_id_str]
+        if not user_entries:
+            bot.answer_callback_query(call.id, "⚠️ أنتِ لستِ مسجلة كقارئة!", show_alert=True)
             return
-        if user_id_str not in group["completed"]:
-            group["completed"].append(user_id_str)
-            bot.answer_callback_query(call.id, "🎉 تقبل الله منكِ وطهر قلبكِ.", show_alert=True)
-        else:
-            bot.answer_callback_query(call.id, "أنتِ مسجلة بالفعل كمكتملة.")
+            
+        # نبحث عن آخر دور غير مكتمل لتسجيل الفراغ منه
+        marked = False
+        for r in reversed(group["readers"]):
+            if str(r["id"]) == user_id_str:
+                if r["done"]:
+                    bot.answer_callback_query(call.id, "⚠️ لقد أتممتِ قراءتك مسبقاً.", show_alert=True)
+                    return
+                else:
+                    r["done"] = True
+                    marked = True
+                    bot.answer_callback_query(call.id, "🎉 تقبل الله منكِ وطهر قلبكِ.", show_alert=True)
+                    break
 
-    # 6. فتح قائمة الإعدادات للمشرفين
+    # 5. حذف آخر دور
+    elif call.data == "delete_last":
+        deleted = False
+        # الحذف من القارئات أولاً (لأنه قد يحوي أدواراً متعددة)
+        for r in reversed(group["readers"]):
+            if str(r["id"]) == user_id_str:
+                group["readers"].remove(r)
+                deleted = True
+                break
+                
+        if not deleted:
+            for l in reversed(group["listeners"]):
+                if str(l["id"]) == user_id_str:
+                    group["listeners"].remove(l)
+                    deleted = True
+                    break
+        if not deleted:
+            for e in reversed(group["excused"]):
+                if str(e["id"]) == user_id_str:
+                    group["excused"].remove(e)
+                    deleted = True
+                    break
+                    
+        if deleted:
+            bot.answer_callback_query(call.id, "🗑️ تم حذف آخر دور لكِ.")
+        else:
+            bot.answer_callback_query(call.id, "⚠️ لا يوجد اسم أو دور مسجل لكِ لحذفه.", show_alert=True)
+
+    # 6. فتح إعدادات المشرفات
     elif call.data == "settings":
-        bot.edit_message_reply_markup(
+        bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
+            text="⚙️ لوحة تحكم المشرفات والمالكة:",
             reply_markup=settings_keyboard(chat_id)
         )
         bot.answer_callback_query(call.id, "⚙️ تم فتح لوحة التحكم.")
         return
 
-    # 7. التبديل بين فتح وإغلاق القائمة
-    elif call.data == "toggle":
+    # 7. التبديل: القائمة الرئيسية
+    elif call.data == "toggle_list":
         group["list_open"] = not group["list_open"]
         bot.edit_message_reply_markup(
             chat_id=chat_id,
             message_id=call.message.message_id,
             reply_markup=settings_keyboard(chat_id)
         )
-        status_txt = "مفتوحة الآن" if group["list_open"] else "مغلقة الآن"
-        bot.answer_callback_query(call.id, f"⚙️ القائمة {status_txt}.")
+        status = "مفتوحة" if group["list_open"] else "مغلقة"
+        bot.answer_callback_query(call.id, f"⚙️ القائمة {status}.")
         return
 
-    # 8. تحديث لوحة العرض يدوياً
-    elif call.data == "refresh":
-        bot.answer_callback_query(call.id, "🔄 جاري التحديث...")
+    # 8. التبديل: الأدوار الإضافية
+    elif call.data == "toggle_extra":
+        group["extra_roles_open"] = not group["extra_roles_open"]
+        bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            reply_markup=settings_keyboard(chat_id)
+        )
+        status = "مفتوحة" if group["extra_roles_open"] else "مغلقة"
+        bot.answer_callback_query(call.id, f"⚙️ الأدوار الإضافية {status}.")
+        return
 
-    # 9. إعادة ضبط القائمة وتصفير الأسماء
+    # 9. الإحصاء النهائي
+    elif call.data == "final_stats":
+        stats_text = "بحمد الله نختم مجلسنا اليوم\n\n"
+        
+        stats_text += "✅ القارئات اللاتي قرأن:\n"
+        readers_who_read = [r for r in group["readers"] if r.get("done")]
+        if not readers_who_read:
+            stats_text += "• لا يوجد\n"
+        else:
+            read_names = []
+            for r in readers_who_read:
+                if r["name"] not in read_names:
+                    read_names.append(r["name"])
+            for i, name in enumerate(read_names, 1):
+                stats_text += f"{i}. {name}\n"
+                
+        stats_text += "\n🎧 المستمعات:\n"
+        if not group["listeners"]:
+            stats_text += "• لا يوجد\n"
+        else:
+            for i, l in enumerate(group["listeners"], 1):
+                stats_text += f"{i}. {l['name']}\n"
+                
+        stats_text += "\n❌ المعتذرات:\n"
+        if not group["excused"]:
+            stats_text += "• لا يوجد\n"
+        else:
+            for i, e in enumerate(group["excused"], 1):
+                stats_text += f"{i}. {e['name']}\n"
+                
+        bot.send_message(chat_id, stats_text)
+        bot.answer_callback_query(call.id, "✅ تم إرسال الإحصاء النهائي للمجلس.")
+        return
+
+    # 10. إعادة الإرسال والتحديث
+    elif call.data == "resend":
+        try:
+            bot.delete_message(chat_id, group["message_id"])
+        except:
+            pass
+            
+        sent = bot.send_message(
+            chat_id,
+            make_board(chat_id),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=main_keyboard()
+        )
+        group["message_id"] = sent.message_id
+        bot.answer_callback_query(call.id, "✅ تم التحديث وإعادة الإرسال.")
+        save_data(data)
+        return
+
+    # 11. إعادة ضبط القائمة وتصفير الأسماء
     elif call.data == "reset":
         old_message = group["message_id"]
         data[str(chat_id)] = default_group()
         data[str(chat_id)]["message_id"] = old_message
-        bot.answer_callback_query(call.id, "🔄 تم إعادة ضبط القائمة وتصفيرها بالكامل.", show_alert=True)
+        bot.answer_callback_query(call.id, "🔄 تم تصفير القائمة بالكامل.", show_alert=True)
 
-    # 10. زر العودة للوحة الرئيسية من الإعدادات
+    # 12. عودة للمجلس (من الإعدادات للرئيسية)
     elif call.data == "back_to_main":
-        bot.edit_message_reply_markup(
+        bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
+            text=make_board(chat_id),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
             reply_markup=main_keyboard()
         )
-        bot.answer_callback_query(call.id, "🔙 عدتِ للوحة الرئيسية.")
+        bot.answer_callback_query(call.id, "🔙 عدتِ للمجلس.")
         return
 
-    # 11. نداء العضوات المقيدات في الخاص لتنبيههن
+    # 13. زر المناداة
     elif call.data == "call":
         all_members = group["readers"] + group["listeners"] + group["excused"]
+        unique_members = {v['id']: v for v in all_members}.values()
+        
         bot.answer_callback_query(call.id, "📢 جاري إرسال التنبيهات في الخاص...")
-        for member in all_members:
+        for member in unique_members:
             try:
                 bot.send_message(int(member["id"]), "هلمُّوا لمجلسٍ تحفُّه الملائكة 🌿")
             except Exception:
