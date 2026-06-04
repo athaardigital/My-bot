@@ -7,6 +7,7 @@ from flask import Flask
 from dotenv import load_dotenv
 import telebot
 from telebot import types
+from hijri_converter import Gregorian
 
 load_dotenv()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -66,15 +67,23 @@ def is_admin(user_id, chat_id):
 def mention(user_id, name):
     return f"<a href='tg://user?id={user_id}'>{html.escape(name)}</a>"
 
-def get_arabic_date():
+def get_dates():
+    now = datetime.now()
     ar_days = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
     ar_months = ["جانفي", "فيفري", "مارس", "أفريل", "ماي", "جوان", "جويلية", "أوت", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
-    now = datetime.now()
-    return f"{ar_days[now.weekday()]} {now.day} {ar_months[now.month - 1]} {now.year} م"
+    
+    miladi = f"{ar_days[now.weekday()]} {now.day} {ar_months[now.month - 1]} {now.year} م"
+    
+    try:
+        h = Gregorian.fromdate(now.date()).to_hijri()
+        hijri = f"{h.day} {h.month_name()} {h.year} هـ"
+        return f"{hijri} | {miladi}"
+    except Exception:
+        return miladi
 
 def make_board(chat_id):
     _, group = get_group(chat_id)
-    text = f"📅 {get_arabic_date()}\n\n📊 إحصاء المجلس الحالي:\n⏳ ---------------------------------- ⏳\n\n"
+    text = f"📅 {get_dates()}\n\n📊 إحصاء المجلس الحالي:\n⏳ ---------------------------------- ⏳\n\n"
     text += "<blockquote>❝ اعلموا رعاكم الله أن حضوركم مجالس العلم النافع هو محض اصطفاء من ربكم فاحمدوه على هذه النعمة وأحسنوا رعايتها ❞</blockquote>\n\n"
     text += "⏳ ---------------------------------- ⏳\n\n✨ قَائِمَةُ تِلَاوَةِ الْقُرْآنِ الْكَرِيمِ ✨\n\n"
     
@@ -100,7 +109,6 @@ def main_keyboard(chat_id):
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(types.InlineKeyboardButton("حذف آخر دور 🗑️", callback_data="delete_last"), types.InlineKeyboardButton("تسجيل اسمي 📝", callback_data="reader"))
     
-    # يظهر زر الدور الإضافي فقط إذا كانت القائمة الإضافية مفتوحة
     if group.get("extra_roles_open", False):
         keyboard.row(types.InlineKeyboardButton("دور إضافي ➕", callback_data="extra_role"))
         
@@ -119,14 +127,12 @@ def settings_keyboard(chat_id):
     keyboard.row(types.InlineKeyboardButton("عودة للمجلس ↩️", callback_data="back_to_main"))
     return keyboard
 
-# كيبورد خاص بأسماء القراء للمشرفين
 def readers_list_keyboard(chat_id):
     _, group = get_group(chat_id)
     keyboard = types.InlineKeyboardMarkup()
     readers = group.get("readers", [])
     for i, r in enumerate(readers):
         text_name = f"{i+1}. {r['name']}"
-        # تمييز الاسم إذا كان هو المحدد للتبديل
         if group.get("swap_state") == i:
             text_name += " (محدد للتبديل 🔄)"
         keyboard.add(types.InlineKeyboardButton(text_name, callback_data=f"mr_sel_{i}"))
@@ -137,7 +143,6 @@ def readers_list_keyboard(chat_id):
     keyboard.add(types.InlineKeyboardButton("رجوع للإعدادات 🔙", callback_data="settings"))
     return keyboard
 
-# كيبورد التحكم بمركز القارئ
 def reader_action_keyboard(index):
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(types.InlineKeyboardButton("تقديم (لأعلى) ⬆️", callback_data=f"mr_up_{index}"), types.InlineKeyboardButton("تأخير (لأسفل) ⬇️", callback_data=f"mr_dn_{index}"))
@@ -158,7 +163,6 @@ def remove_user_from_all(user_id, group):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
-    # استخدام try...finally كحل جذري لمشكلة تعليق الأزرار
     try:
         chat_id = call.message.chat.id
         user_id = call.from_user.id
@@ -167,7 +171,6 @@ def callbacks(call):
         
         target_markup = "main"
 
-        # التحقق من صلاحيات المشرفين
         is_admin_action = call.data in ["settings", "toggle_extra", "toggle_list", "final_stats", "call", "resend", "reset"] or call.data.startswith("mr_")
         if is_admin_action and not is_admin(user_id, chat_id):
             bot.answer_callback_query(call.id, "❌ عذراً، هذا الزر مخصص للمشرفين فقط.", show_alert=True)
@@ -242,11 +245,28 @@ def callbacks(call):
             target_markup = "settings"
 
         elif call.data == "final_stats":
-            total_readers = len(group["readers"])
-            done_readers = sum(1 for r in group["readers"] if r.get("done"))
-            stats_text = f"📊 الإحصاء النهائي للمجلس:\n\n📖 القراء: {total_readers}\n✅ أتموا القراءة: {done_readers}\n🎧 المستمعين: {len(group['listeners'])}\n❌ المعتذرين: {len(group['excused'])}"
+            stats_text = f"📊 الإحصاء النهائي للمجلس ({get_dates()}):\n\n"
+            
+            stats_text += f"📖 الْقَارِئُونَ/ات ({len(group['readers'])}):\n"
+            if group['readers']:
+                stats_text += "\n".join([f"👤 {r['name']}" + (" ✅" if r.get('done') else "") for r in group['readers']])
+            else:
+                stats_text += "لا يوجد"
+                
+            stats_text += f"\n\n🎧 الْمُسْتَمِعُونَ/ات ({len(group['listeners'])}):\n"
+            if group['listeners']:
+                stats_text += "\n".join([f"👤 {l['name']}" for l in group['listeners']])
+            else:
+                stats_text += "لا يوجد"
+                
+            stats_text += f"\n\n❌ الْمُعْتَذِرُونَ/ات ({len(group['excused'])}):\n"
+            if group['excused']:
+                stats_text += "\n".join([f"👤 {e['name']}" for e in group['excused']])
+            else:
+                stats_text += "لا يوجد"
+
             bot.send_message(chat_id, stats_text)
-            bot.answer_callback_query(call.id, "تم إرسال الإحصاء النهائي 📊")
+            bot.answer_callback_query(call.id, "تم إرسال الإحصاء النهائي بالتفاصيل 📊")
             target_markup = "settings"
 
         elif call.data == "call":
@@ -361,14 +381,12 @@ def callbacks(call):
         )
 
     except telebot.apihelper.ApiTelegramException as e:
-        # تجاهل خطأ عدم وجود تعديل في الرسالة، وطباعة الأخطاء الأخرى للتشخيص
         if "message is not modified" not in str(e).lower():
             print(f"Telegram API Error: {e}")
     except Exception as e:
         print(f"General Error in callbacks: {e}")
     
     finally:
-        # هذا الجزء هو الأهم لمنع الأزرار من التعليق، سيعمل دائماً في كل الحالات
         try:
             bot.answer_callback_query(call.id)
         except Exception:
@@ -378,4 +396,3 @@ if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
     print("Bot is running perfectly...")
     bot.infinity_polling()
-
