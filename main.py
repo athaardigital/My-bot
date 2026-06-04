@@ -270,17 +270,22 @@ def callbacks(call):
 
     elif call.data == "settings":
         group["swap_state"] = None # تصفير حالة التبديل عند دخول الإعدادات
+        bot.answer_callback_query(call.id, "إعدادات المشرفين ⚙️")
         target_markup = "settings"
 
+    # ✅ تم إصلاح استجابة هذا الزر بإضافة التنبيه الفوري
     elif call.data == "back_to_main":
+        bot.answer_callback_query(call.id, "العودة للمجلس ↩️")
         target_markup = "main"
 
     # --- نظام إدارة وتبديل الأدوار ---
+    # ✅ تم إصلاح استجابة هذا الزر بإضافة التنبيه الفوري
     elif call.data == "mr_list":
-        if not group["readers"]:
+        if not group.get("readers", []):
             bot.answer_callback_query(call.id, "القائمة فارغة، لا يوجد قراء لإدارتهم! ⚠️", show_alert=True)
             target_markup = "settings"
         else:
+            bot.answer_callback_query(call.id, "جاري فتح إدارة الأدوار 🔄")
             target_markup = "readers_list"
 
     elif call.data.startswith("mr_sel_"):
@@ -296,6 +301,7 @@ def callbacks(call):
             group["swap_state"] = None
             target_markup = "readers_list"
         else:
+            bot.answer_callback_query(call.id)
             target_markup = f"reader_action_{index}"
 
     elif call.data.startswith("mr_up_"):
@@ -327,7 +333,6 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "تم إلغاء عملية التبديل ❌")
         target_markup = "readers_list"
 
-
     # حفظ البيانات
     save_data(data)
     
@@ -350,7 +355,11 @@ def callbacks(call):
             parse_mode="HTML", 
             reply_markup=markup
         )
-    except: pass
+    except telebot.apihelper.ApiTelegramException as e:
+        if "message is not modified" not in str(e).lower():
+            pass # تجاهل خطأ التعديل إذا كانت الواجهة نفسها تماماً
+    except Exception:
+        pass
 
     try: bot.answer_callback_query(call.id)
     except: pass
