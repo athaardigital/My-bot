@@ -548,4 +548,10 @@ if __name__ == "__main__":
     flask_thread.daemon = True
     flask_thread.start()
 
-    bot.infinity_polling(skip_pending=True)
+    print("Bot is starting...")
+    try:
+        bot.remove_webhook()
+        bot.infinity_polling(skip_pending=True)
+    except Exception as e:
+        print(f"Critical error: {e}")
+
