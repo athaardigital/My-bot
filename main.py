@@ -40,7 +40,7 @@ def save_data(data):
 def default_group():
     return {
         "message_id": None,
-        "list_open": True, # يفضل أن تكون مفتوحة افتراضياً عند الإنشاء
+        "list_open": True,
         "extra_roles_open": False,
         "readers": [], 
         "listeners": [],
@@ -116,7 +116,6 @@ def start(message):
     group["message_id"] = sent.message_id
     save_data(data)
 
-# دالة مساعدة لتنظيف المستخدم من القوائم الأخرى عند اختياره دوراً جديداً
 def remove_user_from_all(user_id, group):
     for lst in ["readers", "listeners", "excused"]:
         group[lst] = [u for u in group[lst] if u["id"] != user_id]
@@ -128,13 +127,15 @@ def callbacks(call):
     user_name = call.from_user.first_name
     data, group = get_group(chat_id)
     
-    # التحقق من صلاحيات المشرفين لزر الإعدادات
+    current_menu = "main" if call.data in ["back_to_main", "reader", "listener", "excused", "done", "delete_last"] else "settings"
+
+    # التحقق من صلاحيات المشرفين للأزرار الخاصة بهم
     if call.data in ["settings", "toggle_extra", "toggle_list", "final_stats", "call", "resend", "reset"]:
         if not is_admin(user_id, chat_id):
             bot.answer_callback_query(call.id, "❌ عذراً، هذا الزر مخصص للمشرفين فقط.", show_alert=True)
             return
 
-    # منطق التسجيل في القوائم
+    # 1. زر تسجيل قارئ
     if call.data == "reader":
         if not group.get("list_open", True):
             bot.answer_callback_query(call.id, "القائمة مغلقة حالياً 🔴", show_alert=True)
@@ -143,16 +144,25 @@ def callbacks(call):
         group["readers"].append({"id": user_id, "name": user_name, "done": False})
         bot.answer_callback_query(call.id, "تم تسجيلك كقارئ ✅")
 
+    # 2. زر تسجيل مستمع
     elif call.data == "listener":
+        if not group.get("extra_roles_open", False) and not group.get("list_open", True):
+            bot.answer_callback_query(call.id, "القائمة مغلقة حالياً 🔴", show_alert=True)
+            return
         remove_user_from_all(user_id, group)
         group["listeners"].append({"id": user_id, "name": user_name})
         bot.answer_callback_query(call.id, "تم تسجيلك كمستمع 🎧")
 
+    # 3. زر تسجيل معتذر
     elif call.data == "excused":
+        if not group.get("extra_roles_open", False) and not group.get("list_open", True):
+            bot.answer_callback_query(call.id, "القائمة مغلقة حالياً 🔴", show_alert=True)
+            return
         remove_user_from_all(user_id, group)
         group["excused"].append({"id": user_id, "name": user_name})
         bot.answer_callback_query(call.id, "تم تسجيل اعتذارك ❌")
 
+    # 4. زر تم الفراغ من القراءة
     elif call.data == "done":
         found = False
         for r in group["readers"]:
@@ -165,28 +175,86 @@ def callbacks(call):
         else:
             bot.answer_callback_query(call.id, "يجب أن تسجل كقارئ أولاً ⚠️", show_alert=True)
 
-    # حفظ البيانات بعد أي تغيير
+    # 5. زر حذف آخر دور
+    elif call.data == "delete_last":
+        if group["readers"]:
+            last = group["readers"].pop()
+            bot.answer_callback_query(call.id, f"تم حذف آخر دور: {last['name']} 🗑️")
+        else:
+            bot.answer_callback_query(call.id, "القائمة فارغة بالفعل ⚠️", show_alert=True)
+
+    # 6. زر فتح / إغلاق القائمة
+    elif call.data == "toggle_list":
+        group["list_open"] = not group.get("list_open", True)
+        status = "مفتوحة 🔓" if group["list_open"] else "مغلقة 🔒"
+        bot.answer_callback_query(call.id, f"تم جعل القائمة: {status}")
+
+    # 7. زر تبديل الأدوار (فتح الأدوار الإضافية)
+    elif call.data == "toggle_extra":
+        group["extra_roles_open"] = not group.get("extra_roles_open", False)
+        status = "مفتوحة للأدوار الإضافية 🔓" if group["extra_roles_open"] else "مغلقة للأدوار الإضافية 🔒"
+        bot.answer_callback_query(call.id, f"الأدوار الإضافية: {status}")
+
+    # 8. زر الإحصاء النهائي
+    elif call.data == "final_stats":
+        total_readers = len(group["readers"])
+        done_readers = sum(1 for r in group["readers"] if r.get("done"))
+        stats_text = f"📊 الإحصاء النهائي للمجلس:\n\n📖 عدد القارئين الكلي: {total_readers}\n✅ الذين أتموا القراءة: {done_readers}\n🎧 المستمعين: {len(group['listeners'])}\n❌ المعتذرين: {len(group['excused'])}"
+        bot.send_message(chat_id, stats_text)
+        bot.answer_callback_query(call.id, "تم إرسال الإحصاء النهائي 📊")
+
+    # 9. زر المناداة
+    elif call.data == "call":
+        not_done = [mention(r['id'], r['name']) for r in group["readers"] if not r.get('done')]
+        if not_done:
+            bot.send_message(chat_id, f"📢 تذكير للقارئين الذين لم يتموا القراءة بعد:\n\n" + "\n".join(not_done), parse_mode="HTML")
+            bot.answer_callback_query(call.id, "تم إرسال نداء التذكير 📢")
+        else:
+            bot.answer_callback_query(call.id, "كل القارئين أتموا القراءة! ✨", show_alert=True)
+
+    # 10. زر تصفير القائمة
+    elif call.data == "reset":
+        group["readers"] = []
+        group["listeners"] = []
+        group["excused"] = []
+        bot.answer_callback_query(call.id, "تم تصفير القائمة بالكامل 🔄")
+
+    # 11. زر إعادة الإرسال / التحديث
+    elif call.data == "resend":
+        try: bot.delete_message(chat_id, group["message_id"])
+        except: pass
+        sent = bot.send_message(chat_id, make_board(chat_id), parse_mode="HTML", reply_markup=settings_keyboard(chat_id))
+        group["message_id"] = sent.message_id
+        bot.answer_callback_query(call.id, "تم تحديث وإعادة إرسال اللوحة 🔄")
+
+    elif call.data == "settings":
+        bot.answer_callback_query(call.id, "لوحة التحكم للمشرفين ⚙️")
+
+    elif call.data == "back_to_main":
+        bot.answer_callback_query(call.id, "العودة للمجلس ↩️")
+
+    # حفظ البيانات بعد أي عملية تعديل
     save_data(data)
     
-    # تحديث الرسالة وتجاهل الخطأ في حال لم تتغير البيانات لتجنب تعطل البوت
-    try:
-        markup = settings_keyboard(chat_id) if call.data in ["settings", "toggle_extra", "toggle_list"] else main_keyboard()
-        bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=group["message_id"], 
-            text=make_board(chat_id), 
-            parse_mode="HTML", 
-            reply_markup=markup
-        )
-    except telebot.apihelper.ApiTelegramException as e:
-        # إذا كان الخطأ أن الرسالة متطابقة، نتجاهله
-        if "message is not modified" not in str(e).lower():
-            pass 
+    # تحديث الرسالة الحالية بشكل آمن دون تعطل البوت
+    if call.data != "resend":
+        try:
+            markup = main_keyboard() if current_menu == "main" else settings_keyboard(chat_id)
+            bot.edit_message_text(
+                chat_id=chat_id, 
+                message_id=group["message_id"], 
+                text=make_board(chat_id), 
+                parse_mode="HTML", 
+                reply_markup=markup
+            )
+        except:
+            pass
 
-    bot.answer_callback_query(call.id)
+    try: bot.answer_callback_query(call.id)
+    except: pass
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
-    print("Bot is running...")
+    print("Bot is running perfectly...")
     bot.infinity_polling()
 
