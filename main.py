@@ -216,11 +216,18 @@ def callbacks(call):
             bot.answer_callback_query(call.id, "ليس لديك أدوار متبقية لختمها أو يجب أن تسجل أولاً ⚠️", show_alert=True)
 
     elif call.data == "delete_last":
-        if group["readers"]:
-            last = group["readers"].pop()
-            bot.answer_callback_query(call.id, f"تم حذف آخر دور: {last['name']} 🗑️")
+        # البحث من النهاية إلى البداية عن آخر دور سجله الشخص نفسه
+        target_index = -1
+        for i in range(len(group["readers"]) - 1, -1, -1):
+            if group["readers"][i]["id"] == user_id:
+                target_index = i
+                break
+        
+        if target_index != -1:
+            group["readers"].pop(target_index)
+            bot.answer_callback_query(call.id, "تم حذف آخر دور مسجل لك 🗑️")
         else:
-            bot.answer_callback_query(call.id, "القائمة فارغة بالفعل ⚠️", show_alert=True)
+            bot.answer_callback_query(call.id, "ليس لديك أي أدوار مسجلة لحذفها! ⚠️", show_alert=True)
 
     # --- أزرار المشرفين الأساسية ---
     elif call.data == "toggle_list":
@@ -273,13 +280,11 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "إعدادات المشرفين ⚙️")
         target_markup = "settings"
 
-    # ✅ تم إصلاح استجابة هذا الزر بإضافة التنبيه الفوري
     elif call.data == "back_to_main":
         bot.answer_callback_query(call.id, "العودة للمجلس ↩️")
         target_markup = "main"
 
     # --- نظام إدارة وتبديل الأدوار ---
-    # ✅ تم إصلاح استجابة هذا الزر بإضافة التنبيه الفوري
     elif call.data == "mr_list":
         if not group.get("readers", []):
             bot.answer_callback_query(call.id, "القائمة فارغة، لا يوجد قراء لإدارتهم! ⚠️", show_alert=True)
