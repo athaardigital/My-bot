@@ -8,6 +8,7 @@ import telebot
 from telebot import types
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
+from hijri_converter import Gregorian
 
 # =====================================
 # تحميل المتغيرات
@@ -105,22 +106,26 @@ def mention(user_id, name):
 
 def make_board(chat_id):
     group = get_group(chat_id)
-    today = datetime.now().strftime("%Y/%m/%d")
+    
+    # حساب التاريخ الميلادي والهجري
+    now = datetime.now()
+    greg_date = now.strftime("%Y/%m/%d")
+    hijri_date = Gregorian(now.year, now.month, now.day).to_hijri()
+    today_str = f"{greg_date} م | {hijri_date.year}/{hijri_date.month}/{hijri_date.day} هـ"
 
     state = "🟢 مفتوحة" if group["list_open"] else "🔴 مغلقة"
 
     text = (
-        f"📅 <b>التاريخ:</b> {today}\n\n"
-        "اعلمي رعاكِ الله أنَّ حضوركِ "
-        "لمجالس العلم هو محضُ انتقاءٍ "
-        "وتوفيقٍ من الله "
-        "فأحسني رعاية هذه النعمة "
-        "واحمدي الله عليها.\n\n"
+        f"📅 <b>التاريخ:</b> {today_str}\n\n"
+        "حُضُورُ مَجَالِسِ الْعِلْمِ مَحْضُ اصْطِفَاءٍ "
+        "وَتَوْفِيقٍ مِنَ اللهِ، "
+        "فَلْنُحْسِنْ رِعَايَةَ هَذِهِ النِّعْمَةِ "
+        "وَلْنَحمَدِ اللهَ عَلَيْهَا.\n\n"
     )
 
-    # القارئات
+    # القارئات / القراء
     text += "━━━━━━━━━━━━━━━\n"
-    text += f"📖 <b>القارئات</b> ({len(group['readers'])})\n\n"
+    text += f"📖 <b>قَائِمَةُ الْقِرَاءَةِ</b> ({len(group['readers'])})\n\n"
 
     if not group["readers"]:
         text += "لا يوجد.\n"
@@ -131,9 +136,9 @@ def make_board(chat_id):
 
     text += "\n"
 
-    # المستمعات
+    # المستمعات / المستمعين
     text += "━━━━━━━━━━━━━━━\n"
-    text += f"🎧 <b>المستمعات</b> ({len(group['listeners'])})\n\n"
+    text += f"🎧 <b>قَائِمَةُ الِاسْتِمَاعِ</b> ({len(group['listeners'])})\n\n"
 
     if not group["listeners"]:
         text += "لا يوجد.\n"
@@ -143,9 +148,9 @@ def make_board(chat_id):
 
     text += "\n"
 
-    # المعتذرات
+    # المعتذرات / المعتذرين
     text += "━━━━━━━━━━━━━━━\n"
-    text += f"🌿 <b>المعتذرات</b> ({len(group['excused'])})\n\n"
+    text += f"🌿 <b>قَائِمَةُ الِاعْتِذَارِ</b> ({len(group['excused'])})\n\n"
 
     if not group["excused"]:
         text += "لا يوجد.\n"
@@ -166,10 +171,10 @@ def main_keyboard(chat_id, user_id):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         types.InlineKeyboardButton("📝 تسجيل اسمي", callback_data="reader"),
-        types.InlineKeyboardButton("🎧 مستمعة", callback_data="listener")
+        types.InlineKeyboardButton("🎧 مستمع / مستمعة", callback_data="listener")
     )
     keyboard.add(
-        types.InlineKeyboardButton("🌿 معتذرة", callback_data="excused"),
+        types.InlineKeyboardButton("🌿 معتذر / معتذرة", callback_data="excused"),
         types.InlineKeyboardButton("🗑️ حذف اسمي", callback_data="delete")
     )
     keyboard.add(
@@ -221,7 +226,7 @@ def update_board(chat_id, user_id):
         print(f"Update Board Error: {e}")
 
 # =====================================
-# حذف العضوة
+# حذف العضو/ة
 # =====================================
 
 def remove_member(group, user_id):
@@ -238,10 +243,10 @@ def start(message):
     if message.chat.type == "private":
         bot.send_message(
             message.chat.id,
-            "السلام عليكم ورحمة الله وبركاته\n\nحيَّاكِ الله.\n\n"
-            "انشري البوت فضلًا فهو صدقةٌ عنِّي وعن والديَّ "
-            "ومقرأتنا وكل المسلمين والمسلمات والمؤمنين والمؤمنات "
-            "الأحياء منهم والأموات."
+            "السلام عليكم ورحمة الله وبركاته\n\nحيَّاكُمُ الله.\n\n"
+            "نَشْرُكُم لِهَذَا الْبُوتِ يُعَدُّ صَدَقَةً جَارِيَةً عَنِّي وَعَنْ وَالِدَيَّ "
+            "وَمَقْرَأَتِنَا وَكَافَّةِ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ، وَالْمُؤْمِنِينَ وَالْمُؤْمِنَاتِ "
+            "الْأَحْيَاءِ مِنْهُمْ وَالْأَمْوَاتِ."
         )
         return
 
@@ -269,7 +274,7 @@ def callbacks(call):
     group = get_group(chat_id)
     user = call.from_user
 
-    full_name = user.first_name or "مستخدمة"
+    full_name = user.first_name or "مستخدم/ة"
     if user.last_name:
         full_name += f" {user.last_name}"
 
