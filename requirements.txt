@@ -1,6 +1,5 @@
 pyTelegramBotAPI
 flask
 python-dotenv
-hijri-converter
 pymongo[srv]
-
+hijri-converter
