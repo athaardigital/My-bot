@@ -154,6 +154,12 @@ def reader_action_keyboard(index):
 
 @bot.message_handler(commands=["start"])
 def start(message):
+    # إرسال رسالة ترحيبية في الخاص فقط
+    if message.chat.type == "private":
+        welcome_text = "السلام عليكم ورحمة الله وبركاته\n\nحيَّاكم الله.\n\n📌 أنشروا البوت فضلًا فهو صدقةٌ عنِّي وعن والديَّ ومقرأتنا وكل المسلمين والمسلمات الأحياء منهم والأموات."
+        bot.send_message(message.chat.id, welcome_text)
+
+    # إرسال لوحة المجلس
     with file_lock:
         data, group = get_group(message.chat.id)
         sent = bot.send_message(message.chat.id, make_board(message.chat.id), parse_mode="HTML", reply_markup=main_keyboard(message.chat.id))
