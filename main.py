@@ -2,41 +2,40 @@ import os
 import json
 import html
 import threading
+import time
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request
 from dotenv import load_dotenv
 import telebot
 from telebot import types
 from hijri_converter import Gregorian
+from pymongo import MongoClient
 
 load_dotenv()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
-DATA_FILE = "groups_data.json"
 
-# استخدام RLock لتنظيم طابور الضغطات السريعة ومنع تعليق البوت
+# الربط بقاعدة بيانات MongoDB السحابية
+MONGO_URI = os.environ.get("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client["AthaarDigitalDB"]
+groups_col = db["groups"]
+users_col = db["users"]
+
 file_lock = threading.RLock()
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running perfectly!", 200
+    return "Bot is running perfectly on Cloud Backend!", 200
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-    return {}
-
-def save_data(data):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except IOError as e:
-        print(f"Error saving data: {e}")
+# مسار Webhook لاستقبال التحديثات من تليجرام ومنع الخطأ 409
+@app.route("/" + BOT_TOKEN, methods=["POST"])
+def getMessage():
+    json_string = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "!", 200
 
 def default_group():
     return {
@@ -46,16 +45,26 @@ def default_group():
         "readers": [], 
         "listeners": [],
         "excused": [],
-        "swap_state": None
+        "swap_state": None,
+        "history": []
     }
 
 def get_group(chat_id):
-    data = load_data()
     chat_id = str(chat_id)
-    if chat_id not in data:
-        data[chat_id] = default_group()
-        save_data(data)
-    return data, data[chat_id]
+    doc = groups_col.find_one({"chat_id": chat_id})
+    if not doc:
+        group = default_group()
+        groups_col.insert_one({"chat_id": chat_id, "group": group})
+    else:
+        group = doc["group"]
+    
+    # محاكاة الهيكل القديم لضمان عدم تعطل الكود الأساسي
+    data = {chat_id: group}
+    return data, group
+
+def save_data(data):
+    for chat_id, group in data.items():
+        groups_col.update_one({"chat_id": str(chat_id)}, {"$set": {"group": group}}, upsert=True)
 
 def is_admin(user_id, chat_id):
     try:
@@ -120,11 +129,10 @@ def main_keyboard(chat_id):
     return keyboard
 
 def settings_keyboard(chat_id):
-    _, group = get_group(chat_id)
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(types.InlineKeyboardButton("إدارة وتبديل الأدوار 🔄", callback_data="mr_list"))
     keyboard.row(types.InlineKeyboardButton("القائمة الإضافية 🔓/🔒", callback_data="toggle_extra"), types.InlineKeyboardButton("القائمة الأساسية 🔓/🔒", callback_data="toggle_list"))
-    keyboard.row(types.InlineKeyboardButton("الإحصاء النهائي 📊", callback_data="final_stats"), types.InlineKeyboardButton("زر المناداة 📢", callback_data="call"))
+    keyboard.row(types.InlineKeyboardButton("السجل الإحصائي 📈", callback_data="history_stats"), types.InlineKeyboardButton("الإحصاء النهائي 📊", callback_data="final_stats"))
     keyboard.row(types.InlineKeyboardButton("تحديث 🔄", callback_data="resend"), types.InlineKeyboardButton("تصفير القائمة 🔄", callback_data="reset"))
     keyboard.row(types.InlineKeyboardButton("عودة للمجلس ↩️", callback_data="back_to_main"))
     return keyboard
@@ -152,14 +160,23 @@ def reader_action_keyboard(index):
     keyboard.row(types.InlineKeyboardButton("رجوع للأسماء 🔙", callback_data="mr_list"))
     return keyboard
 
+def private_start_keyboard(user_id):
+    keyboard = types.InlineKeyboardMarkup()
+    user = users_col.find_one({"user_id": user_id})
+    is_subbed = user.get("subscribed", False) if user else False
+    
+    if is_subbed:
+        keyboard.add(types.InlineKeyboardButton("إلغاء تفعيل أذكار الجمعة 🔕", callback_data="toggle_azkar_off"))
+    else:
+        keyboard.add(types.InlineKeyboardButton("تفعيل أذكار الجمعة 🔔", callback_data="toggle_azkar_on"))
+    return keyboard
+
 @bot.message_handler(commands=["start"])
 def start(message):
-    # إرسال رسالة ترحيبية في الخاص فقط
     if message.chat.type == "private":
         welcome_text = "السلام عليكم ورحمة الله وبركاته\n\nحيَّاكم الله.\n\n📌 أنشروا البوت فضلًا فهو صدقةٌ عنِّي وعن والديَّ ومقرأتنا وكل المسلمين والمسلمات الأحياء منهم والأموات."
-        bot.send_message(message.chat.id, welcome_text)
+        bot.send_message(message.chat.id, welcome_text, reply_markup=private_start_keyboard(message.from_user.id))
 
-    # إرسال لوحة المجلس
     with file_lock:
         data, group = get_group(message.chat.id)
         sent = bot.send_message(message.chat.id, make_board(message.chat.id), parse_mode="HTML", reply_markup=main_keyboard(message.chat.id))
@@ -180,16 +197,26 @@ def callbacks(call):
         target_markup = "main"
         should_edit = True
 
-        # نظام القفل لتنظيم الطابور ومنع ضياع البيانات عند الضغط المتكرر
+        # أزرار الاشتراك الاختياري في أذكار الجمعة بالخاص
+        if call.data == "toggle_azkar_on":
+            users_col.update_one({"user_id": user_id}, {"$set": {"subscribed": True}}, upsert=True)
+            bot.answer_callback_query(call.id, "تم تفعيل استقبال أذكار الجمعة بنجاح! ✨", show_alert=True)
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=private_start_keyboard(user_id))
+            return
+        elif call.data == "toggle_azkar_off":
+            users_col.update_one({"user_id": user_id}, {"$set": {"subscribed": False}}, upsert=True)
+            bot.answer_callback_query(call.id, "تم إلغاء تفعيل أذكار الجمعة. 🔕", show_alert=True)
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=private_start_keyboard(user_id))
+            return
+
         with file_lock:
             data, group = get_group(chat_id)
             
-            is_admin_action = call.data in ["settings", "toggle_extra", "toggle_list", "final_stats", "call", "resend", "reset"] or call.data.startswith("mr_")
+            is_admin_action = call.data in ["settings", "toggle_extra", "toggle_list", "final_stats", "history_stats", "call", "resend", "reset"] or call.data.startswith("mr_")
             if is_admin_action and not is_admin(user_id, chat_id):
                 bot.answer_callback_query(call.id, "❌ عذراً، هذا الزر مخصص للمشرفين فقط.", show_alert=True)
                 return
 
-            # --- أزرار المستخدمين ---
             if call.data == "reader":
                 if not group.get("list_open", True):
                     bot.answer_callback_query(call.id, "القائمة الأساسية مغلقة حالياً 🔴", show_alert=True)
@@ -244,7 +271,6 @@ def callbacks(call):
                 else:
                     bot.answer_callback_query(call.id, "ليس لديك أي أدوار مسجلة لحذفها! ⚠️", show_alert=True)
 
-            # --- أزرار المشرفين الأساسية ---
             elif call.data == "toggle_list":
                 group["list_open"] = not group.get("list_open", True)
                 status = "مفتوحة 🔓" if group["list_open"] else "مغلقة 🔒"
@@ -258,8 +284,19 @@ def callbacks(call):
                 target_markup = "settings"
 
             elif call.data == "final_stats":
-                stats_text = f"📊 الإحصاء النهائي للمجلس:\n\n"
+                # الأرشفة التلقائية في السجل قبل طباعة الإحصاء
+                if "history" not in group:
+                    group["history"] = []
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if not any(h.get("date") == today_str for h in group["history"]):
+                    group["history"].append({
+                        "date": today_str,
+                        "readers_count": len(group['readers']),
+                        "listeners_count": len(group['listeners']),
+                        "excused_count": len(group['excused'])
+                    })
                 
+                stats_text = f"📊 الإحصاء النهائي للمجلس:\n\n"
                 stats_text += f"📖 الْقَارِئُونَ/ات ({len(group['readers'])}):\n"
                 if group['readers']:
                     stats_text += "\n".join([f"👤 {r['name']}" + (" ✅" if r.get('done') else "") for r in group['readers']])
@@ -279,7 +316,21 @@ def callbacks(call):
                     stats_text += "لا يوجد"
 
                 bot.send_message(chat_id, stats_text)
-                bot.answer_callback_query(call.id, "تم إرسال الإحصاء النهائي بالتفاصيل 📊")
+                bot.answer_callback_query(call.id, "تم إرسال الإحصاء النهائي وأرشفته 📊")
+                target_markup = "settings"
+
+            elif call.data == "history_stats":
+                history = group.get("history", [])
+                if not history:
+                    bot.answer_callback_query(call.id, "لا توجد مجالس مؤرشفة في السجل بعد! 📈", show_alert=True)
+                else:
+                    history_text = "📈 السجل الإحصائي التراكمي للمجالس:\n\n"
+                    for h in history[-10:]:  # عرض آخر 10 مجالس لضمان جمالية الرسالة
+                        history_text += f"📅 تاريخ: {h['date']}\n"
+                        history_text += f" 📖 قراء: {h['readers_count']} | 🎧 مستمعين: {h['listeners_count']} | ❌ معتذرين: {h['excused_count']}\n"
+                        history_text += "----------------------------------------\n"
+                    bot.send_message(chat_id, history_text)
+                    bot.answer_callback_query(call.id, "تم فتح الأرشيف الإحصائي 📉")
                 target_markup = "settings"
 
             elif call.data == "call":
@@ -316,7 +367,6 @@ def callbacks(call):
                 bot.answer_callback_query(call.id, "العودة للمجلس ↩️")
                 target_markup = "main"
 
-            # --- إدارة وتبديل الأدوار ---
             elif call.data == "mr_list":
                 if not group.get("readers", []):
                     bot.answer_callback_query(call.id, "لا يوجد قراء لإدارتهم! ⚠️", show_alert=True)
@@ -373,7 +423,6 @@ def callbacks(call):
             if should_edit:
                 save_data(data)
                 
-        # --- تعديل الرسالة خارج القفل لتفادي بطء الشبكة ---
         if should_edit:
             if target_markup == "main":
                 markup = main_keyboard(chat_id)
@@ -394,22 +443,40 @@ def callbacks(call):
             )
 
     except telebot.apihelper.ApiTelegramException as e:
-        # معالجة مشكلة التعليق بسبب الضغط المتكرر
         if "too many requests" in str(e).lower():
             try: bot.answer_callback_query(call.id, "⚠️ أبطئ قليلاً! جاري معالجة طلباتك...", show_alert=True)
             except: pass
-        elif "message is not modified" not in str(e).lower():
-            print(f"Telegram API Error: {e}")
     except Exception as e:
         print(f"General Error in callbacks: {e}")
-    finally:
+
+# خيط برمي خلفي لبث أذكار الجمعة تلقائياً للمشتركين فقط دون إزعاج البقية
+def friday_broadcast_loop():
+    while True:
         try:
-            bot.answer_callback_query(call.id)
-        except Exception:
-            pass
+            now = datetime.now()
+            # الإرسال التلقائي كل يوم جمعة في تمام الساعة 09:00 صباحاً
+            if now.weekday() == 4 and now.hour == 9 and now.minute == 0:
+                subscribers = users_col.find({"subscribed": True})
+                azkar_msg = "✨ *أذكار يوم الجمعة المباركة* ✨\n\nاللهم صلِ وسلم على نبينا محمد وعلى آله وصحبه أجمعين. لا تنسوا قراءة سورة الكهف والدعاء في ساعة الإجابة. 🌿"
+                for sub in subscribers:
+                    try:
+                        bot.send_message(sub["user_id"], azkar_msg, parse_mode="Markdown")
+                        time.sleep(0.05)
+                    except Exception:
+                        pass
+                time.sleep(60)
+        except Exception as e:
+            print(f"Error in broadcast loop: {e}")
+        time.sleep(30)
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
-    print("Bot is running perfectly...")
-    bot.infinity_polling()
-
+    # تشغيل خيط البث الدوري
+    threading.Thread(target=friday_broadcast_loop, daemon=True).start()
+    
+    # إعداد الـ Webhook الخاص بـ Render ديناميكياً لحل المشكلة 409
+    bot.remove_webhook()
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
+    if RENDER_URL:
+        bot.set_webhook(url=RENDER_URL + "/" + BOT_TOKEN)
+        
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
