@@ -2,3 +2,4 @@ pyTelegramBotAPI
 flask
 python-dotenv
 hijri-converter
+python -m pip install "pymongo[srv]"
