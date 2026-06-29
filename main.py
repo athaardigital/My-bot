@@ -21,9 +21,9 @@ REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
 REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
 if not BOT_TOKEN:
-    raise Exception("TOKEN NOT FOUND")
+    raise ValueError("⚠️ TELEGRAM_BOT_TOKEN NOT FOUND IN ENV")
 if not REDIS_URL or not REDIS_TOKEN:
-    raise Exception("UPSTASH CREDENTIALS NOT FOUND")
+    raise ValueError("⚠️ UPSTASH CREDENTIALS NOT FOUND IN ENV")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
