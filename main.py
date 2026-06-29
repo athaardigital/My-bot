@@ -123,6 +123,7 @@ def make_board(chat_id):
         today_str = f"{greg_date} م"
 
     state = "🟢 مَفْتُوحَة" if group.get("list_open", False) else "🔴 مُغْلَقَة"
+    extra_state = "🟢 مَسْمُوحَة" if group.get("allow_extra_turns", False) else "🔴 مَمْنُوعَة"
 
     text = (
         f"📅 <b>التَّارِيخ:</b> {today_str}\n\n"
@@ -139,8 +140,13 @@ def make_board(chat_id):
     if not group.get("readers"):
         text += "لَا يُوجَدُ حَالِيّاً.\n"
     else:
+        user_counts = {}
         for i, member in enumerate(group["readers"], start=1):
-            done = " ✅" if str(member["id"]) in group.get("completed", []) else ""
+            uid = str(member["id"])
+            user_counts[uid] = user_counts.get(uid, 0) + 1
+            completed_times = group.get("completed", []).count(uid)
+            
+            done = " ✅" if user_counts[uid] <= completed_times else ""
             text += f"{i}. {mention(member['id'], member['name'])}{done}\n"
 
     text += "\n"
@@ -168,7 +174,8 @@ def make_board(chat_id):
             text += f"{i}. {mention(member['id'], member['name'])}\n"
 
     text += "\n━━━━━━━━━━━━━━━\n"
-    text += f"🔒 <b>حَالَةُ الْقَائِمَةِ:</b> {state}"
+    text += f"🔒 <b>حَالَةُ الْقَائِمَةِ:</b> {state}\n"
+    text += f"🔄 <b>الْأَدْوَارُ الْإِضَافِيَّةُ:</b> {extra_state}"
 
     return text
 
@@ -193,10 +200,17 @@ def main_keyboard(chat_id, user_id):
 
     return keyboard
 
-def register_keyboard():
+def register_keyboard(chat_id):
+    group = get_group(chat_id)
     keyboard = types.InlineKeyboardMarkup(row_width=1)
+    
+    keyboard.add(types.InlineKeyboardButton("📖 قَارِئٌ", callback_data="role_reader"))
+    
+    # إظهار زر الدور الإضافي فقط إذا كانت الأدوار الإضافية مسموحة
+    if group.get("allow_extra_turns", False):
+        keyboard.add(types.InlineKeyboardButton("➕ دَوْرٌ إِضَافِيٌّ", callback_data="role_extra"))
+
     keyboard.add(
-        types.InlineKeyboardButton("📖 قَارِئٌ", callback_data="role_reader"),
         types.InlineKeyboardButton("🎧 مُسْتَمِعٌ", callback_data="role_listener"),
         types.InlineKeyboardButton("🌿 مُعْتَذِرٌ", callback_data="role_excused"),
         types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْقَائِمَةِ الرَّئِيسِيَّةِ", callback_data="back_to_main")
@@ -298,9 +312,7 @@ def callbacks(call):
     member = {"id": str(user.id), "name": full_name}
     user_id_str = str(user.id)
 
-    # -------------------------------------
     # حِمَايَةُ أَزْرَارِ الْمُشْرِفِينَ
-    # -------------------------------------
     admin_callbacks = ["settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", "reset", "call"]
     if call.data in admin_callbacks or call.data.startswith("edit_turn:") or call.data.startswith("move_up:") or call.data.startswith("move_down:") or call.data.startswith("swap_turn:") or call.data.startswith("doswap:"):
         if not is_admin(user.id, chat_id):
@@ -314,7 +326,7 @@ def callbacks(call):
         bot.edit_message_reply_markup(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            reply_markup=register_keyboard()
+            reply_markup=register_keyboard(chat_id)
         )
         bot.answer_callback_query(call.id)
         return
@@ -333,35 +345,44 @@ def callbacks(call):
             bot.answer_callback_query(call.id, "❌ الْقَائِمَةُ مُغْلَقَةٌ حَالِيّاً! لَا يُمْكِنُ التَّسْجِيلُ.", show_alert=True)
             return
 
-        is_already_reader = any(str(x["id"]) == user_id_str for x in group.get("readers", []))
+        registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
         
-        if is_already_reader:
-            if not group.get("allow_extra_turns", False):
-                bot.answer_callback_query(call.id, "❌ الْأَدْوَارُ الْإِضَافِيَّةُ مُغْلَقَةٌ حَالِيّاً مِنْ قِبَلِ الْمُشْرِفِينَ!", show_alert=True)
-                return
-
-            if user_id_str not in group.get("completed", []):
-                bot.answer_callback_query(call.id, "⚠️ لَا يُمْكِنُكَ طَلَبُ دَوْرٍ إِضَافِيٍّ حَتَّى تُؤَكِّدَ الِانْتِهَاءَ مِنْ دَوْرِكَ السَّابِقِ!", show_alert=True)
-                return
-            
-            # إِذَا كَانَ يُرِيدُ دَوْراً إِضَافِيّاً، نُزِيلُهُ مِنَ الْمُنْتَهِينَ لِيَبْدَأَ دَوْرَهُ الْجَدِيدَ
-            group["completed"].remove(user_id_str)
+        if registered_times > 0:
+            bot.answer_callback_query(call.id, "⚠️ أَنْتَ مُسَجَّلٌ بِالْفِعْلِ كَقَارِئٍ! إِذَا أَرَدْتَ الزِّيَادَةَ، اسْتَخْدِمْ زِرَّ (دَوْرٌ إِضَافِيٌّ).", show_alert=True)
+            return
 
         group["listeners"] = [x for x in group.get("listeners", []) if str(x["id"]) != user_id_str]
         group["excused"] = [x for x in group.get("excused", []) if str(x["id"]) != user_id_str]
         
-        if not is_already_reader:
-            group["readers"].append(member)
-            
+        group["readers"].append(member)
         save_group(chat_id, group)
         update_board(chat_id, user.id)
         
-        bot.answer_callback_query(call.id, "✅ تَمَّ تَسْجِيلُكَ فِي قَائِمَةِ الْقُرَّاءِ.")
-        bot.send_message(
-            chat_id,
-            f"🌿 بَارَكَ اللَّهُ فِيكَ يَا {mention(user.id, full_name)}، احْرِصْ عَلَى حُضُورِ دَوْرِكَ وَالِالْتِزَامِ بِهِ.",
-            parse_mode="HTML"
-        )
+        alert_msg = "✅ تَمَّ تَسْجِيلُكَ فِي قَائِمَةِ الْقُرَّاءِ.\n\n🌿 بَارَكَ اللَّهُ فِيكَ، احْرِصْ عَلَى حُضُورِ دَوْرِكَ وَالِالْتِزَامِ بِهِ."
+        bot.answer_callback_query(call.id, alert_msg, show_alert=True)
+
+    elif call.data == "role_extra":
+        if not group.get("allow_extra_turns", False):
+            bot.answer_callback_query(call.id, "❌ الْأَدْوَارُ الْإِضَافِيَّةُ مُغْلَقَةٌ حَالِيّاً!", show_alert=True)
+            return
+        
+        registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
+        completed_times = group.get("completed", []).count(user_id_str)
+
+        if registered_times == 0:
+            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تُسَجِّلَ دَوْراً أَسَاسِيّاً أَوَّلاً قَبْلَ طَلَبِ دَوْرٍ إِضَافِيٍّ!", show_alert=True)
+            return
+        
+        if completed_times < registered_times:
+            bot.answer_callback_query(call.id, "⚠️ لَا يُمْكِنُكَ طَلَبُ دَوْرٍ إِضَافِيٍّ حَتَّى تُتِمَّ دَوْرَكَ الْحَالِيَّ (سَوَاءً كَانَ أَسَاسِيّاً أَوْ إِضَافِيّاً)!", show_alert=True)
+            return
+        
+        group["readers"].append(member)
+        save_group(chat_id, group)
+        update_board(chat_id, user.id)
+
+        alert_msg = "✅ تَمَّ تَسْجِيلُ دَوْرٍ إِضَافِيٍّ لَكَ.\n\n🌿 ضَاعَفَ اللَّهُ أَجْرَكَ وَبَارَكَ فِي هِمَّتِكَ."
+        bot.answer_callback_query(call.id, alert_msg, show_alert=True)
 
     elif call.data == "role_listener":
         remove_member(group, user.id)
@@ -381,26 +402,25 @@ def callbacks(call):
         remove_member(group, user.id)
         save_group(chat_id, group)
         update_board(chat_id, user.id)
-        bot.answer_callback_query(call.id, "🗑️ تَمَّ حَذْفُ اسْمِكَ مِنَ الْقَائِمَةِ.", show_alert=True)
+        bot.answer_callback_query(call.id, "🗑️ تَمَّ حَذْفُ اسْمِكَ وَكُلِّ أَدْوَارِكَ مِنَ الْقَائِمَةِ.", show_alert=True)
 
     elif call.data == "done":
-        is_registered = any(str(x["id"]) == user_id_str for x in group.get("readers", []))
-        if not is_registered:
+        registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
+        completed_times = group.get("completed", []).count(user_id_str)
+
+        if registered_times == 0:
             bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تَكُونَ مُسَجَّلاً فِي قَائِمَةِ الْقُرَّاءِ أَوَّلاً!", show_alert=True)
             return
 
-        if user_id_str not in group.get("completed", []):
+        if completed_times < registered_times:
             group["completed"].append(user_id_str)
             save_group(chat_id, group)
             update_board(chat_id, user.id)
-            bot.answer_callback_query(call.id, "✅ هَنِيئاً لَكَ! تَمَّ تَأْكِيدُ الْفَرَاغِ مِنَ الْقِرَاءَةِ.")
-            bot.send_message(
-                chat_id,
-                f"✨ يَا {mention(user.id, full_name)}... جَزَاكَ اللَّهُ خَيْراً عَلَى الْحُضُورِ وَالْمُشَارَكَةِ. تَذَكَّرْ رَضِيَ اللَّهُ عَنْكَ أَنْ تُرَاجِعَ مَحْفُوظَكَ وَتَتَدَرَّبَ عَلَى تَقْوِيمِ أَخْطَائِكَ وَمُرَاجَعَةِ مُلَاحَظَاتِ مُعَلِّمِكَ، وَإِيَّاكَ أَنْ تَهْجُرَ صَاحِبَكَ الْقُرْآنَ.",
-                parse_mode="HTML"
-            )
+            
+            alert_msg = "✅ هَنِيئاً لَكَ إِتْمَامُ الْقِرَاءَةِ!\n\n✨ جَزَاكَ اللَّهُ خَيْراً، لَا تَنْسَ مُرَاجَعَةَ مَحْفُوظِكَ وَتَقْوِيمَ أَخْطَائِكَ، وَإِيَّاكَ أَنْ تَهْجُرَ الْقُرْآنَ."
+            bot.answer_callback_query(call.id, alert_msg, show_alert=True)
         else:
-            bot.answer_callback_query(call.id, "ℹ️ لَقَدْ قُمْتَ بِتَأْكِيدِ الْقِرَاءَةِ مُسْبَقاً.", show_alert=True)
+            bot.answer_callback_query(call.id, "ℹ️ لَقَدْ قُمْتَ بِتَأْكِيدِ الْقِرَاءَةِ لِجَمِيعِ أَدْوَارِكَ مُسْبَقاً.", show_alert=True)
 
     elif call.data == "settings":
         bot.edit_message_reply_markup(
@@ -413,13 +433,13 @@ def callbacks(call):
     elif call.data == "toggle":
         group["list_open"] = not group.get("list_open", False)
         save_group(chat_id, group)
-        bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=settings_keyboard(chat_id))
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْقَائِمَةِ.")
 
     elif call.data == "toggle_extra":
         group["allow_extra_turns"] = not group.get("allow_extra_turns", False)
         save_group(chat_id, group)
-        bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=settings_keyboard(chat_id))
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْأَدْوَارِ الْإِضَافِيَّةِ.")
 
     elif call.data == "refresh":
@@ -450,8 +470,12 @@ def callbacks(call):
         if not readers:
             stats_text += "لَا يُوجَدُ\n"
         else:
+            user_counts = {}
             for i, m in enumerate(readers, start=1):
-                status = "✅" if str(m["id"]) in completed else "❌"
+                uid = str(m["id"])
+                user_counts[uid] = user_counts.get(uid, 0) + 1
+                completed_times = completed.count(uid)
+                status = "✅" if user_counts[uid] <= completed_times else "❌"
                 stats_text += f"{i}. {m['name']} {status}\n"
                 
         stats_text += "\n🎧 <b>الْمُسْتَمِعُونَ:</b>\n"
@@ -614,4 +638,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
