@@ -147,7 +147,8 @@ def make_board(chat_id):
             completed_times = group.get("completed", []).count(uid)
             
             done = " ✅" if user_counts[uid] <= completed_times else ""
-            text += f"{i}. {mention(member['id'], member['name'])}{done}\n"
+            extra_badge = " <b>(إِضَافِيّ)</b>" if member.get("is_extra") else ""
+            text += f"{i}. {mention(member['id'], member['name'])}{extra_badge}{done}\n"
 
     text += "\n"
 
@@ -206,7 +207,6 @@ def register_keyboard(chat_id):
     
     keyboard.add(types.InlineKeyboardButton("📖 قَارِئٌ", callback_data="role_reader"))
     
-    # إظهار زر الدور الإضافي فقط إذا كانت الأدوار الإضافية مسموحة
     if group.get("allow_extra_turns", False):
         keyboard.add(types.InlineKeyboardButton("➕ دَوْرٌ إِضَافِيٌّ", callback_data="role_extra"))
 
@@ -266,6 +266,26 @@ def remove_member(group, user_id):
     group["excused"] = [x for x in group.get("excused", []) if str(x["id"]) != user_id_str]
     group["completed"] = [x for x in group.get("completed", []) if str(x) != user_id_str]
 
+def show_manage_roles(call, chat_id, group):
+    """دالة مساعدة لعرض قائمة ترتيب الأعضاء بدلاً من تكرار الكود"""
+    if not group.get("readers"):
+        bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ قُرَّاءٌ مُسَجَّلُونَ حَالِيّاً.", show_alert=True)
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    for i, r in enumerate(group["readers"]):
+        extra_badge = " (إِضَافِيّ)" if r.get("is_extra") else ""
+        keyboard.add(types.InlineKeyboardButton(f"{i+1}. {r['name']}{extra_badge}", callback_data=f"edit_turn:{i}"))
+    keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings"))
+
+    bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        text="🔄 <b>اخْتَرْ أَحَدَ الْأَدْوَارِ لِتَعْدِيلِهِ أَوْ تَبْدِيلِهِ:</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
 # =====================================
 # أَمْرُ الِابْتِدَاءِ (start)
 # =====================================
@@ -314,7 +334,7 @@ def callbacks(call):
 
     # حِمَايَةُ أَزْرَارِ الْمُشْرِفِينَ
     admin_callbacks = ["settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", "reset", "call"]
-    if call.data in admin_callbacks or call.data.startswith("edit_turn:") or call.data.startswith("move_up:") or call.data.startswith("move_down:") or call.data.startswith("swap_turn:") or call.data.startswith("doswap:"):
+    if call.data in admin_callbacks or call.data.startswith(("edit_turn:", "move_up:", "move_down:", "swap_turn:", "doswap:")):
         if not is_admin(user.id, chat_id):
             bot.answer_callback_query(call.id, "❌ عُذْراً! هَذِهِ الْإِعْدَادَاتُ مَحْصُورَةٌ لِلْمُشْرِفِينَ فَقَطْ.", show_alert=True)
             return
@@ -354,7 +374,18 @@ def callbacks(call):
         group["listeners"] = [x for x in group.get("listeners", []) if str(x["id"]) != user_id_str]
         group["excused"] = [x for x in group.get("excused", []) if str(x["id"]) != user_id_str]
         
-        group["readers"].append(member)
+        # تعيين الدور كدور أساسي
+        member["is_extra"] = False
+        
+        # البحث عن أول دور إضافي لإدراج الدور الأساسي قبله
+        insert_index = len(group.get("readers", []))
+        for i, r in enumerate(group.get("readers", [])):
+            if r.get("is_extra", False):
+                insert_index = i
+                break
+                
+        group["readers"].insert(insert_index, member)
+        
         save_group(chat_id, group)
         update_board(chat_id, user.id)
         
@@ -370,14 +401,17 @@ def callbacks(call):
         completed_times = group.get("completed", []).count(user_id_str)
 
         if registered_times == 0:
-            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تُسَجِّلَ دَوْراً أَسَاسِيّاً و تكمله أَوَّلاً قَبْلَ طَلَبِ دَوْرٍ إِضَافِيٍّ!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تُسَجِّلَ دَوْراً أَسَاسِيّاً وتكمله أَوَّلاً قَبْلَ طَلَبِ دَوْرٍ إِضَافِيٍّ!", show_alert=True)
             return
         
         if completed_times < registered_times:
             bot.answer_callback_query(call.id, "⚠️ لَا يُمْكِنُكَ طَلَبُ دَوْرٍ إِضَافِيٍّ حَتَّى تُتِمَّ دَوْرَكَ الْحَالِيَّ (سَوَاءً كَانَ أَسَاسِيّاً أَوْ إِضَافِيّاً)!", show_alert=True)
             return
         
+        # تعيين الدور كدور إضافي وإضافته دائماً في نهاية القائمة
+        member["is_extra"] = True
         group["readers"].append(member)
+        
         save_group(chat_id, group)
         update_board(chat_id, user.id)
 
@@ -476,7 +510,8 @@ def callbacks(call):
                 user_counts[uid] = user_counts.get(uid, 0) + 1
                 completed_times = completed.count(uid)
                 status = "✅" if user_counts[uid] <= completed_times else "❌"
-                stats_text += f"{i}. {m['name']} {status}\n"
+                extra_badge = " (إِضَافِيّ)" if m.get("is_extra") else ""
+                stats_text += f"{i}. {m['name']}{extra_badge} {status}\n"
                 
         stats_text += "\n🎧 <b>الْمُسْتَمِعُونَ:</b>\n"
         if not listeners:
@@ -521,105 +556,94 @@ def callbacks(call):
     # ==================================================
     
     elif call.data == "manage_roles":
-        if not group.get("readers"):
-            bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ قُرَّاءٌ مُسَجَّلُونَ حَالِيّاً لِتَعْدِيلِ أَدْوَارِهِمْ.", show_alert=True)
-            return
-
-        keyboard = types.InlineKeyboardMarkup(row_width=1)
-        for r in group["readers"]:
-            keyboard.add(types.InlineKeyboardButton(r["name"], callback_data=f"edit_turn:{r['id']}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings"))
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="🔄 <b>اخْتَرْ أَحَدَ الْقُرَّاءِ لِتَعْدِيلِ أَوْ تَبْدِيلِ دَوْرِهِ:</b>",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        show_manage_roles(call, chat_id, group)
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("edit_turn:"):
-        target_id = call.data.split(":")[1]
-        target_name = next((x["name"] for x in group["readers"] if str(x["id"]) == target_id), "الْقَارِئُ")
+        idx = int(call.data.split(":")[1])
+        if idx >= len(group.get("readers", [])):
+            bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ، لَمْ يَعُدْ هَذَا الدَّوْرُ مُسَجَّلاً.", show_alert=True)
+            return
+            
+        target_name = group["readers"][idx]["name"]
 
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         keyboard.add(
-            types.InlineKeyboardButton("تَقْدِيمٌ ⬆️", callback_data=f"move_up:{target_id}"),
-            types.InlineKeyboardButton("تَأْخِيرٌ ⬇️", callback_data=f"move_down:{target_id}")
+            types.InlineKeyboardButton("تَقْدِيمٌ ⬆️", callback_data=f"move_up:{idx}"),
+            types.InlineKeyboardButton("تَأْخِيرٌ ⬇️", callback_data=f"move_down:{idx}")
         )
-        keyboard.add(types.InlineKeyboardButton("تَبْدِيلٌ مَعَهُ 🔄", callback_data=f"swap_turn:{target_id}"))
+        keyboard.add(types.InlineKeyboardButton("تَبْدِيلٌ مَعَهُ 🔄", callback_data=f"swap_turn:{idx}"))
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْقَائِمَةِ", callback_data="manage_roles"))
 
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text=f"⚙️ <b>إِدَارَةُ تَرْتِيبِ الْعُضْوِ:</b> {target_name}\n\nاخْتَرْ إِجْرَاءً التَّعْدِيلِ الْمُعْتَمَدِ:",
+            text=f"⚙️ <b>إِدَارَةُ تَرْتِيبِ الدَّوْرِ رَقْم ({idx+1}):</b> {target_name}\n\nاخْتَرْ إِجْرَاءً التَّعْدِيلِ الْمُعْتَمَدِ:",
             parse_mode="HTML",
             reply_markup=keyboard
         )
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("move_up:"):
-        target_id = call.data.split(":")[1]
-        readers = group["readers"]
-        idx = next((i for i, x in enumerate(readers) if str(x["id"]) == target_id), None)
+        idx = int(call.data.split(":")[1])
+        readers = group.get("readers", [])
 
-        if idx is not None and idx > 0:
+        if idx > 0 and idx < len(readers):
             readers[idx], readers[idx - 1] = readers[idx - 1], readers[idx]
             save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَقْدِيمُ دَوْرِ الْقَارِئِ بِنَجَاحٍ.", show_alert=True)
-            callbacks(telebot.types.CallbackQuery(call.id, call.from_user, call.message, "manage_roles", call.chat_instance))
+            bot.answer_callback_query(call.id, "✅ تَمَّ تَقْدِيمُ الدَّوْرِ بِنَجَاحٍ.", show_alert=True)
+            show_manage_roles(call, chat_id, group)
         else:
-            bot.answer_callback_query(call.id, "⚠️ الْعُضْوُ فِي بِدَايَةِ الْقَائِمَةِ بِالْفِعْلِ!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي بِدَايَةِ الْقَائِمَةِ بِالْفِعْلِ!", show_alert=True)
 
     elif call.data.startswith("move_down:"):
-        target_id = call.data.split(":")[1]
-        readers = group["readers"]
-        idx = next((i for i, x in enumerate(readers) if str(x["id"]) == target_id), None)
+        idx = int(call.data.split(":")[1])
+        readers = group.get("readers", [])
 
-        if idx is not None and idx < len(readers) - 1:
+        if idx >= 0 and idx < len(readers) - 1:
             readers[idx], readers[idx + 1] = readers[idx + 1], readers[idx]
             save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَأْخِيرُ دَوْرِ الْقَارِئِ بِنَجَاحٍ.", show_alert=True)
-            callbacks(telebot.types.CallbackQuery(call.id, call.from_user, call.message, "manage_roles", call.chat_instance))
+            bot.answer_callback_query(call.id, "✅ تَمَّ تَأْخِيرُ الدَّوْرِ بِنَجَاحٍ.", show_alert=True)
+            show_manage_roles(call, chat_id, group)
         else:
-            bot.answer_callback_query(call.id, "⚠️ الْعُضْوُ فِي نِهَايَةِ الْقَائِمَةِ بِالْفِعْلِ!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي نِهَايَةِ الْقَائِمَةِ بِالْفِعْلِ!", show_alert=True)
 
     elif call.data.startswith("swap_turn:"):
-        target_id = call.data.split(":")[1]
-        target_name = next((x["name"] for x in group["readers"] if str(x["id"]) == target_id), "الْقَارِئُ")
+        idx = int(call.data.split(":")[1])
+        if idx >= len(group.get("readers", [])):
+            bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ.", show_alert=True)
+            return
+            
+        target_name = group["readers"][idx]["name"]
 
         keyboard = types.InlineKeyboardMarkup(row_width=1)
-        for r in group["readers"]:
-            if str(r["id"]) != target_id:
-                keyboard.add(types.InlineKeyboardButton(f"تَبْدِيلٌ مَعَ: {r['name']}", callback_data=f"doswap:{target_id}:{r['id']}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 إِلْغَاءٌ", callback_data=f"edit_turn:{target_id}"))
+        for i, r in enumerate(group["readers"]):
+            if i != idx:
+                extra_badge = " (إِضَافِيّ)" if r.get("is_extra") else ""
+                keyboard.add(types.InlineKeyboardButton(f"تَبْدِيلٌ مَعَ: {i+1}. {r['name']}{extra_badge}", callback_data=f"doswap:{idx}:{i}"))
+        keyboard.add(types.InlineKeyboardButton("🔙 إِلْغَاءٌ", callback_data=f"edit_turn:{idx}"))
 
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text=f"🔄 <b>اخْتَرْ عُضْواً آخَرَ لِتَبْدِيلِ الْمَرَاكِزِ مَعَ ({target_name}):</b>",
+            text=f"🔄 <b>اخْتَرْ دَوْراً آخَرَ لِتَبْدِيلِ الْمَرَاكِزِ مَعَ ({target_name}):</b>",
             parse_mode="HTML",
             reply_markup=keyboard
         )
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("doswap:"):
-        id1 = call.data.split(":")[1]
-        id2 = call.data.split(":")[2]
-        readers = group["readers"]
+        idx1 = int(call.data.split(":")[1])
+        idx2 = int(call.data.split(":")[2])
+        readers = group.get("readers", [])
 
-        idx1 = next((i for i, x in enumerate(readers) if str(x["id"]) == id1), None)
-        idx2 = next((i for i, x in enumerate(readers) if str(x["id"]) == id2), None)
-
-        if idx1 is not None and idx2 is not None:
+        if idx1 < len(readers) and idx2 < len(readers):
             readers[idx1], readers[idx2] = readers[idx2], readers[idx1]
             save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَبْدِيلُ أَدْوَارِ الْعُضْوَيْنِ بِنَجَاحٍ.", show_alert=True)
-            callbacks(telebot.types.CallbackQuery(call.id, call.from_user, call.message, "manage_roles", call.chat_instance))
+            bot.answer_callback_query(call.id, "✅ تَمَّ تَبْدِيلُ الْأَدْوَارِ بِنَجَاحٍ.", show_alert=True)
+            show_manage_roles(call, chat_id, group)
         else:
-            bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ، لَمْ يَعُدْ أَحَدُ الْأَعْضَاءِ مُسَجَّلاً.", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ، لَمْ يَعُدْ أَحَدُ الْأَدْوَارِ مُسَجَّلاً.", show_alert=True)
 
 # =====================================
 # التَّشْغِيلُ مَعَ Webhook
@@ -638,3 +662,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
