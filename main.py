@@ -370,7 +370,7 @@ def callbacks(call):
         completed_times = group.get("completed", []).count(user_id_str)
 
         if registered_times == 0:
-            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تُسَجِّلَ دَوْراً أَسَاسِيّاً أَوَّلاً قَبْلَ طَلَبِ دَوْرٍ إِضَافِيٍّ!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تُسَجِّلَ دَوْراً أَسَاسِيّاً و تكمله أَوَّلاً قَبْلَ طَلَبِ دَوْرٍ إِضَافِيٍّ!", show_alert=True)
             return
         
         if completed_times < registered_times:
