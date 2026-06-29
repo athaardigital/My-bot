@@ -11,13 +11,14 @@ from upstash_redis import Redis
 from hijridate import Gregorian
 
 # =====================================
-# تَحْمِيلُ الْمُتَغَيِّرَاتِ (مع تنظيف المسافات تلقائياً)
+# تَحْمِيلُ الْمُتَغَيِّرَاتِ
 # =====================================
+
 load_dotenv()
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
-REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
+REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ TELEGRAM_BOT_TOKEN NOT FOUND IN ENV")
@@ -29,11 +30,13 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # =====================================
 # الِاتِّصَالُ بِقَاعِدَةِ الْبَيَانَاتِ (Upstash Redis)
 # =====================================
+
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 
 # =====================================
 # Flask & Webhook
 # =====================================
+
 app = Flask(__name__)
 
 @app.route("/")
@@ -50,6 +53,7 @@ def receive_update():
 # =====================================
 # بَيَانَاتُ الْمَجْمُوعَةِ السَّحَابِيَّةِ
 # =====================================
+
 def default_group():
     return {
         "message_id": None,
@@ -87,6 +91,7 @@ def save_group(chat_id, group):
 # =====================================
 # الصَّلَاحِيَّاتُ
 # =====================================
+
 def is_admin(user_id, chat_id):
     try:
         member = bot.get_chat_member(chat_id, user_id)
@@ -97,6 +102,7 @@ def is_admin(user_id, chat_id):
 # =====================================
 # الْمَنْشَن
 # =====================================
+
 def mention(user_id, name):
     safe_name = name.replace("<", "").replace(">", "")
     return f"<a href='tg://user?id={user_id}'>{safe_name}</a>"
@@ -104,6 +110,7 @@ def mention(user_id, name):
 # =====================================
 # اللَّوْحَةُ الرَّئِيسِيَّةُ
 # =====================================
+
 def make_board(chat_id):
     group = get_group(chat_id)
     
@@ -174,9 +181,10 @@ def make_board(chat_id):
     return text
 
 # =====================================
-# لَوْحَاتُ الْأَزْرَارِ (تمت السرعة والاستقرار)
+# لَوْحَاتُ الْأَزْرَارِ
 # =====================================
-def main_keyboard(chat_id):
+
+def main_keyboard(chat_id, user_id):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         types.InlineKeyboardButton("📝 تَسْجِيلُ اسْمِي", callback_data="register_menu")
@@ -185,10 +193,12 @@ def main_keyboard(chat_id):
         types.InlineKeyboardButton("🗑️ حَذْفُ الِاسْمِ", callback_data="delete"),
         types.InlineKeyboardButton("✅ تَمَّ الْفَرَاغُ مِنَ الْقِرَاءَةِ", callback_data="done")
     )
-    # يظهر الزر دائماً لتجنب البطء والاختفاء، ويتم حمايته برمجياً عند الضغط
-    keyboard.add(
-        types.InlineKeyboardButton("⚙️ إِعْدَادَاتُ الْإِشْرَافِ", callback_data="settings")
-    )
+
+    if is_admin(user_id, chat_id):
+        keyboard.add(
+            types.InlineKeyboardButton("⚙️ إِعْدَادَاتُ الْإِشْرَافِ", callback_data="settings")
+        )
+
     return keyboard
 
 def register_keyboard(chat_id):
@@ -227,7 +237,8 @@ def settings_keyboard(chat_id):
 # =====================================
 # تَحْدِيثُ اللَّوْحَةِ
 # =====================================
-def update_board(chat_id):
+
+def update_board(chat_id, user_id):
     group = get_group(chat_id)
     if not group.get("message_id"):
         return
@@ -239,7 +250,7 @@ def update_board(chat_id):
             text=make_board(chat_id),
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=main_keyboard(chat_id)
+            reply_markup=main_keyboard(chat_id, user_id)
         )
     except Exception as e:
         print(f"Update Board Error: {e}")
@@ -247,6 +258,7 @@ def update_board(chat_id):
 # =====================================
 # دَوَالُّ التَّعْدِيلِ عَلَى الْأَعْضَاءِ
 # =====================================
+
 def remove_member(group, user_id):
     user_id_str = str(user_id)
     group["readers"] = [x for x in group.get("readers", []) if str(x["id"]) != user_id_str]
@@ -255,6 +267,7 @@ def remove_member(group, user_id):
     group["completed"] = [x for x in group.get("completed", []) if str(x) != user_id_str]
 
 def show_manage_roles(call, chat_id, group):
+    """دالة مساعدة لعرض قائمة ترتيب الأعضاء بدلاً من تكرار الكود"""
     if not group.get("readers"):
         bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ قُرَّاءٌ مُسَجَّلُونَ حَالِيّاً.", show_alert=True)
         return
@@ -276,6 +289,7 @@ def show_manage_roles(call, chat_id, group):
 # =====================================
 # أَمْرُ الِابْتِدَاءِ (start)
 # =====================================
+
 @bot.message_handler(commands=["start"])
 def start(message):
     if message.chat.type == "private":
@@ -295,7 +309,7 @@ def start(message):
         make_board(chat_id),
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=main_keyboard(message.chat.id)
+        reply_markup=main_keyboard(message.chat.id, message.from_user.id)
     )
 
     group["message_id"] = sent.message_id
@@ -304,6 +318,7 @@ def start(message):
 # =====================================
 # مَعَالِجُ التَّفَاعُلِ مَعَ الْأَزْرَارِ
 # =====================================
+
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
     chat_id = call.message.chat.id
@@ -337,10 +352,13 @@ def callbacks(call):
         return
 
     elif call.data == "back_to_main":
-        bot.edit_message_reply_markup(
+        bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            reply_markup=main_keyboard(chat_id)
+            text=make_board(chat_id),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=main_keyboard(chat_id, user.id)
         )
         bot.answer_callback_query(call.id)
         return
@@ -359,8 +377,10 @@ def callbacks(call):
         group["listeners"] = [x for x in group.get("listeners", []) if str(x["id"]) != user_id_str]
         group["excused"] = [x for x in group.get("excused", []) if str(x["id"]) != user_id_str]
         
+        # تعيين الدور كدور أساسي
         member["is_extra"] = False
         
+        # البحث عن أول دور إضافي لإدراج الدور الأساسي قبله
         insert_index = len(group.get("readers", []))
         for i, r in enumerate(group.get("readers", [])):
             if r.get("is_extra", False):
@@ -370,7 +390,7 @@ def callbacks(call):
         group["readers"].insert(insert_index, member)
         
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         
         alert_msg = "✅ تَمَّ تَسْجِيلُكَ فِي قَائِمَةِ الْقُرَّاءِ.\n\n🌿 بَارَكَ اللَّهُ فِيكَ، احْرِصْ عَلَى حُضُورِ دَوْرِكَ وَالِالْتِزَامِ بِهِ."
         bot.answer_callback_query(call.id, alert_msg, show_alert=True)
@@ -391,11 +411,12 @@ def callbacks(call):
             bot.answer_callback_query(call.id, "⚠️ لَا يُمْكِنُكَ طَلَبُ دَوْرٍ إِضَافِيٍّ حَتَّى تُتِمَّ دَوْرَكَ الْحَالِيَّ (سَوَاءً كَانَ أَسَاسِيّاً أَوْ إِضَافِيّاً)!", show_alert=True)
             return
         
+        # تعيين الدور كدور إضافي وإضافته دائماً في نهاية القائمة
         member["is_extra"] = True
         group["readers"].append(member)
         
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
 
         alert_msg = "✅ تَمَّ تَسْجِيلُ دَوْرٍ إِضَافِيٍّ لَكَ.\n\n🌿 ضَاعَفَ اللَّهُ أَجْرَكَ وَبَارَكَ فِي هِمَّتِكَ."
         bot.answer_callback_query(call.id, alert_msg, show_alert=True)
@@ -404,20 +425,20 @@ def callbacks(call):
         remove_member(group, user.id)
         group["listeners"].append(member)
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🎧 تَمَّ تَسْجِيلُكَ كَمُسْتَمِعٍ.")
 
     elif call.data == "role_excused":
         remove_member(group, user.id)
         group["excused"].append(member)
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🌿 تَمَّ تَسْجِيلُ اعْتِذَارِكَ.")
 
     elif call.data == "delete":
         remove_member(group, user.id)
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🗑️ تَمَّ حَذْفُ اسْمِكَ وَكُلِّ أَدْوَارِكَ مِنَ الْقَائِمَةِ.", show_alert=True)
 
     elif call.data == "done":
@@ -431,7 +452,7 @@ def callbacks(call):
         if completed_times < registered_times:
             group["completed"].append(user_id_str)
             save_group(chat_id, group)
-            update_board(chat_id)
+            update_board(chat_id, user.id)
             
             alert_msg = "✅ هَنِيئاً لَكَ إِتْمَامُ الْقِرَاءَةِ!\n\n✨ جَزَاكَ اللَّهُ خَيْراً، لَا تَنْسَ مُرَاجَعَةَ مَحْفُوظِكَ وَتَقْوِيمَ أَخْطَائِكَ، وَإِيَّاكَ أَنْ تَهْجُرَ الْقُرْآنَ."
             bot.answer_callback_query(call.id, alert_msg, show_alert=True)
@@ -439,9 +460,12 @@ def callbacks(call):
             bot.answer_callback_query(call.id, "ℹ️ لَقَدْ قُمْتَ بِتَأْكِيدِ الْقِرَاءَةِ لِجَمِيعِ أَدْوَارِكَ مُسْبَقاً.", show_alert=True)
 
     elif call.data == "settings":
-        bot.edit_message_reply_markup(
+        bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
+            text=make_board(chat_id),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
             reply_markup=settings_keyboard(chat_id)
         )
         bot.answer_callback_query(call.id)
@@ -449,13 +473,13 @@ def callbacks(call):
     elif call.data == "toggle":
         group["list_open"] = not group.get("list_open", False)
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْقَائِمَةِ.")
 
     elif call.data == "toggle_extra":
         group["allow_extra_turns"] = not group.get("allow_extra_turns", False)
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْأَدْوَارِ الْإِضَافِيَّةِ.")
 
     elif call.data == "refresh":
@@ -468,7 +492,7 @@ def callbacks(call):
             make_board(chat_id),
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=main_keyboard(chat_id)
+            reply_markup=main_keyboard(chat_id, user.id)
         )
         group["message_id"] = sent.message_id
         save_group(chat_id, group)
@@ -517,7 +541,7 @@ def callbacks(call):
         group = default_group()
         group["message_id"] = old_message
         save_group(chat_id, group)
-        update_board(chat_id)
+        update_board(chat_id, user.id)
         bot.answer_callback_query(call.id, "🔄 تَمَّتْ إِعَادَةُ ضَبْطِ الْمَجْلِسِ تَمَاماً.", show_alert=True)
 
     elif call.data == "call":
@@ -536,6 +560,7 @@ def callbacks(call):
     # ==================================================
     # إِدَارَةُ الْأَدْوَارِ وَالتَّرْتِيبِ
     # ==================================================
+    
     elif call.data == "manage_roles":
         show_manage_roles(call, chat_id, group)
         bot.answer_callback_query(call.id)
@@ -629,11 +654,12 @@ def callbacks(call):
 # =====================================
 # التَّشْغِيلُ مَعَ Webhook
 # =====================================
+
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
     
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
     if RENDER_URL:
         bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
         print(f"Webhook securely set to {RENDER_URL}/{BOT_TOKEN}")
