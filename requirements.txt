@@ -1,6 +1,5 @@
 pyTelegramBotAPI
 flask
 python-dotenv
-pymongo
-dnspython
-hijri-converter
+upstash-redis
+hijridate
