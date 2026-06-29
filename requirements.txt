@@ -1,5 +1,5 @@
 pyTelegramBotAPI
 flask
 python-dotenv
-pymongo[srv]
+upstash-redis
 hijri-converter
