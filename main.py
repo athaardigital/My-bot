@@ -78,7 +78,27 @@ def check_reminders():
 
         updated_lessons = []
         for lesson in lessons:
-            is_today = (lesson["day_or_date"] == current_day_ar or lesson["day_or_date"] == current_date_str)
+            recurrence = lesson.get("recurrence", "مرة واحدة").strip()
+            day_or_date = lesson.get("day_or_date", "").strip()
+
+            # التَّحَقُّقُ مِنْ مُطَابَقَةِ الْيَوْمِ حَسَبَ التَّكْرَارِ
+            is_today = False
+            if recurrence == "يوميا":
+                is_today = True
+            elif recurrence == "أسبوعيا":
+                if day_or_date == current_day_ar:
+                    is_today = True
+                else:
+                    try:
+                        dt = datetime.strptime(day_or_date, "%Y-%m-%d")
+                        if dt.weekday() == now.weekday():
+                            is_today = True
+                    except:
+                        pass
+            else:  # مرة واحدة
+                if day_or_date == current_date_str or day_or_date == current_day_ar:
+                    is_today = True
+
             if is_today:
                 try:
                     l_time = datetime.strptime(lesson["time"], "%H:%M")
@@ -252,7 +272,7 @@ def main_keyboard(chat_id):
         types.InlineKeyboardButton("✅ تَمَّ الْقِرَاءَةُ", callback_data="done")
     )
     
-    # الصَّفُّ الثَّانِي: زِرُّ الدَّوْرِ الْإِضَافِيِّ يَظْهَرُ فَقَطْ إِذَا كَانَ مُفَعَّلاً مَعَ زِرِّ الْحَذْفِ[span_2](start_span)[span_2](end_span)
+    # الصَّفُّ الثَّانِي: زِرُّ الدَّوْرِ الْإِضَافِيِّ يَظْهَرُ فَقَطْ إِذَا كَانَ مُفَعَّلاً مَعَ زِرِّ الْحَذْفِ
     if group.get("allow_extra_turns", False):
         keyboard.add(
             types.InlineKeyboardButton("➕ تَسْجِيلُ دَوْرٍ إِضَافِيٍّ", callback_data="role_extra"),
@@ -263,7 +283,7 @@ def main_keyboard(chat_id):
             types.InlineKeyboardButton("🗑️ حَذْفُ الِاسْمِ", callback_data="delete")
         )
         
-    # زِرُّ تَفْعِيلُ التَّنْبِيهَاتِ (خَاصٌّ عَبْرَ الرَّابِطِ الْعَمِيقِ لِحِفْظِ الْخُصُوصِيَّةِ)[span_3](start_span)[span_3](end_span)
+    # زِرُّ تَفْعِيلُ التَّنْبِيهَاتِ (خَاصٌّ عَبْرَ الرَّابِطِ الْعَمِيقِ لِحِفْظِ الْخُصُوصِيَّةِ)
     try:
         bot_username = bot.get_me().username
         keyboard.add(
@@ -272,7 +292,7 @@ def main_keyboard(chat_id):
     except:
         pass
 
-    # زِرُّ إِعْدَادَاتِ الْإِشْرَافِ (يَظْهَرُ تِلْقَائِيّاً لِلْجَمِيعِ عِنْدَ التَّفْعِيلِ لَكِنَّهُ مَحْمِيٌّ)[span_4](start_span)[span_4](end_span)
+    # زِرُّ إِعْدَادَاتِ الْإِشْرَافِ (يَظْهَرُ تِلْقَائِيّاً لِلْجَمِيعِ عِنْدَ التَّفْعِيلِ لَكِنَّهُ مَحْمِيٌّ)
     keyboard.add(
         types.InlineKeyboardButton("⚙️ إِعْدَادَاتُ الْإِشْرَافِ", callback_data="settings")
     )
@@ -420,30 +440,71 @@ def add_lesson(message):
         bot.send_message(message.chat.id, "❌ عُذْراً! هَذَا الْأَمْرُ مَخْصُوصٌ لِلْمُشْرِفِينَ فَقَطْ.")
         return
         
-    text = message.text.replace("/lesson", "").strip()
-    if not text:
+    text = message.text.strip()
+    
+    # مُعَالَجَةُ الْمُدْخَلَاتِ سَطْراً بِسَطْرٍ أَوْ عَبْرَ الْفَاصِلِ الْقَدِيمِ (دَعْمٌ مُزْدَوِجٌ)
+    if "|" in text:
+        parts = [p.strip() for p in text.replace("/lesson", "").split("|") if p.strip()]
+    else:
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if lines and lines[0].startswith("/lesson"):
+            parts = lines[1:]
+        else:
+            parts = lines
+
+    if not parts:
         bot.send_message(
             message.chat.id,
-            "ℹ️ <b>طَرِيقَةُ إِضَافَةِ حِصَّةٍ شَرْعِيَّةٍ جَدِيدَةٍ:</b>\n\n"
-            "<code>/lesson اسم الحصة | اليوم أو التاريخ | الوقت | دقائق التذكير</code>\n\n"
-            "<b>أَمْثِلَة:</b>\n"
-            "<code>/lesson مجلس التفسير | الأحد | 18:00 | 30</code>\n"
-            "<code>/lesson مراجعة المتون | 2026-07-05 | 15:30 | 15</code>",
+            "ℹ️ <b>طَرِيقَةُ إِضَافَةِ حِصَّةٍ شَرْعِيَّةٍ (سَطْراً بِسَطْرٍ):</b>\n\n"
+            "<code>/lesson</code>\n"
+            "<code>اسم الحصة</code>\n"
+            "<code>اليوم أو التاريخ (مثال: 2026-06-30)</code>\n"
+            "<code>الوقت (مثال: 15:00)</code>\n"
+            "<code>دقائق التذكير (مثال: 15)</code>\n"
+            "<code>التكرار (مرة واحدة | يوميا | أسبوعيا)</code>",
             parse_mode="HTML"
         )
         return
         
-    parts = [p.strip() for p in text.split("|")]
     if len(parts) < 4:
-        bot.send_message(message.chat.id, "⚠️ عُذْراً، يَجِبُ مَلْءُ جَمِيعِ الْحُقُولِ وبِفَاصِلِ الْخَطِّ ( | ).")
+        bot.send_message(message.chat.id, "⚠️ عُذْراً، يَجِبُ مَلْءُ 4 حُقُولٍ عَلَى الْأَقَلِّ (الِاسْمُ، التَّارِيخُ، الْوَقْتُ، التَّذْكِيرُ).")
         return
         
-    name, day_or_date, l_time, remind_before = parts[0], parts[1], parts[2], parts[3]
+    name = parts[0]
+    raw_date = parts[1]
+    l_time = parts[2].replace(" ", "")  # إِزَالَةُ الْفَرَاغَاتِ مِنَ الْوَقْتِ
+    remind_before = parts[3].replace(" ", "")
+    recurrence = parts[4].strip() if len(parts) > 4 else "مرة واحدة"
     
+    # تَنْظِيفُ حَقْلِ التَّكْرَارِ لِتَفَادِي الْأَخْطَاءِ الْإِمْلَائِيَّةِ
+    if "يوم" in recurrence:
+        recurrence = "يوميا"
+    elif "أسبوع" in recurrence or "اسبوع" in recurrence:
+        recurrence = "أسبوعيا"
+    else:
+        recurrence = "مرة واحدة"
+
+    # تَوْحِيدُ تَنْسِيقِ التَّارِيخِ وَتَنْظِيفِهِ مِنَ الْفَرَاغَاتِ (مِثْلَ: 2026-6-30 إِلَى 2026-06-30)
+    day_or_date = raw_date
+    for sep in ["-", "/"]:
+        if sep in raw_date:
+            date_parts = [dp.strip() for dp in raw_date.split(sep) if dp.strip()]
+            if len(date_parts) == 3:
+                try:
+                    y = date_parts[0]
+                    m = date_parts[1].zfill(2)
+                    d = date_parts[2].zfill(2)
+                    if len(y) == 4:
+                        day_or_date = f"{y}-{m}-{d}"
+                    elif len(d) == 4:
+                        day_or_date = f"{d}-{m}-{y}"
+                except:
+                    pass
+
     try:
         datetime.strptime(l_time, "%H:%M")
     except:
-        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 18:00")
+        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 15:00")
         return
         
     new_lesson = {
@@ -451,6 +512,7 @@ def add_lesson(message):
         "day_or_date": day_or_date,
         "time": l_time,
         "remind_before": remind_before,
+        "recurrence": recurrence,
         "last_triggered": ""
     }
     
@@ -466,7 +528,8 @@ def add_lesson(message):
         f"✅ <b>تَمَّتْ إِضَافَةُ الْحِصَّةِ بِنَجَاحٍ!</b>\n\n"
         f"📚 <b>الْحِصَّة:</b> {name}\n"
         f"📅 <b>الْمَوْعِد:</b> {day_or_date} عِنْدَ {l_time}\n"
-        f"🔔 <b>التَّذْكِير:</b> قَبْلَهَا بِـ {remind_before} دَقِيقَة.",
+        f"🔔 <b>التَّذْكِير:</b> قَبْلَهَا بِـ {remind_before} دَقِيقَة.\n"
+        f"🔄 <b>التَّكْرَار:</b> {recurrence}",
         parse_mode="HTML"
     )
 
@@ -487,7 +550,7 @@ def callbacks(call):
     member = {"id": str(user.id), "name": full_name}
     user_id_str = str(user.id)
 
-    # حِمَايَةُ أَزْرَارِ الْمُشْرِفِينَ دَاخِلَ الْمَجْمُوعَةِ[span_5](start_span)[span_5](end_span)
+    # حِمَايَةُ أَزْرَارِ الْمُشْرِفِينَ دَاخِلَ الْمَجْمُوعَةِ
     admin_callbacks = ["settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", "reset", "call", "view_lessons"]
     if call.data in admin_callbacks or call.data.startswith(("edit_turn:", "move_up:", "move_down:", "swap_turn:", "doswap:")):
         if not is_admin(user.id, chat_id):
@@ -644,7 +707,8 @@ def callbacks(call):
         txt = "🔔 <b>حِصَصُ الْمَجْلِسِ الْمُسْجَّلَةِ:</b>\n\n"
         if not lessons: txt += "لَا يُوجَدُ حِصَصٌ حَالِيّاً."
         for i, l in enumerate(lessons, start=1):
-            txt += f"{i}. {l['name']} | 📅 {l['day_or_date']} | ⏰ {l['time']} (تَنْبِيه {l['remind_before']} د)\n"
+            rec = l.get("recurrence", "مرة واحدة")
+            txt += f"{i}. {l['name']} | 📅 {l['day_or_date']} | ⏰ {l['time']} ({rec})\n"
         bot.send_message(chat_id, txt, parse_mode="HTML")
         bot.answer_callback_query(call.id)
 
@@ -758,3 +822,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
