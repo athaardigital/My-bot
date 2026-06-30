@@ -583,6 +583,35 @@ def add_lesson(message):
     )
 
 # =====================================
+# أَمْرُ الْمُنَادَاةِ (call)
+# =====================================
+
+@bot.message_handler(commands=["call"])
+def command_call(message):
+    if message.chat.type == "private":
+        bot.send_message(message.chat.id, "⚠️ هَذَا الْأَمْرُ يُسْتَخْدَمُ دَاخِلَ الْمَجْمُوعَةِ لِمُنَادَاةِ الْمُشْتَرِكِينَ.")
+        return
+
+    chat_id = str(message.chat.id)
+    if not is_admin(message.from_user.id, chat_id):
+        bot.reply_to(message, "❌ عُذْراً! هَذَا الْأَمْرُ لِلْمُشْرِفِينَ فَقَطْ.")
+        return
+        
+    subs_data = redis_client.get(f"group:{chat_id}:subscribers")
+    subs = json.loads(subs_data) if subs_data else []
+    
+    if not subs:
+        bot.reply_to(message, "⚠️ لَا يُوجَدُ مُشْتَرِكُونَ نَشِطُونَ فِي تَنْبِيهَاتِ هَذِهِ الْمَجْمُوعَةِ حَالِيّاً.")
+        return
+
+    for sub_id in subs:
+        try: 
+            bot.send_message(int(sub_id), "هَلُمُّوا لِمَجْلِسٍ تَحُفُّهُ الْمَلَائِكَةُ 🌿")
+        except: 
+            pass
+    bot.reply_to(message, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.")
+
+# =====================================
 # مَعَالِجُ التَّفَاعُلِ مَعَ الْأَزْرَارِ
 # =====================================
 
