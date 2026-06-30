@@ -1,4 +1,3 @@
-
 import os
 import time
 import json
@@ -75,9 +74,12 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
+    print("🔄 [DEBUG] Running reminder check...")
     group_ids = redis_client.smembers("active_groups")
+    
     if not group_ids:
-        return "No active groups found.", 200
+        print("ℹ️ [DEBUG] No active groups found.")
+        return "No active groups.", 200
 
     for cid in group_ids:
         cid_str = str(cid)
@@ -88,6 +90,8 @@ def check_reminders():
         lessons = json.loads(lessons_data)
         subs_data = redis_client.get(f"group:{cid_str}:subscribers")
         subs = json.loads(subs_data) if subs_data else []
+        
+        print(f"🔍 [DEBUG] Checking group {cid_str}, Found {len(lessons)} lessons.")
 
         updated_lessons = []
         for lesson in lessons:
@@ -95,69 +99,49 @@ def check_reminders():
             day_or_date = lesson.get("day_or_date", "").strip()
             country = lesson.get("country", "الجزائر").strip()
 
-            # جلب النطاق الزمني الصحيح حسب الدولة المستهدفة
             tz_name = get_tz_by_country(country)
-            try:
-                now = datetime.now(ZoneInfo(tz_name))
-            except:
-                now = datetime.now(ZoneInfo("Africa/Algiers"))
-
+            now = datetime.now(ZoneInfo(tz_name))
             current_day_ar = get_arabic_day_name(now.weekday())
             current_date_str = now.strftime("%Y-%m-%d")
             current_time_str = now.strftime("%H:%M")
 
-            is_today = False
-            if recurrence == "يوميا":
-                is_today = True
-            elif recurrence == "أسبوعيا":
-                if day_or_date == current_day_ar:
-                    is_today = True
-                else:
-                    try:
-                        dt = datetime.strptime(day_or_date, "%Y-%m-%d")
-                        if dt.weekday() == now.weekday():
-                            is_today = True
-                    except:
-                        pass
-            else:
-                if day_or_date == current_date_str or day_or_date == current_day_ar:
-                    is_today = True
+            # منطق الفحص
+            is_today = (recurrence == "يوميا") or \
+                       (recurrence == "أسبوعيا" and day_or_date == current_day_ar) or \
+                       (day_or_date == current_date_str)
 
-            is_triggered = False
             if is_today:
                 try:
                     l_time = datetime.strptime(lesson["time"], "%H:%M")
                     now_time = datetime.strptime(current_time_str, "%H:%M")
-                    diff_minutes = (l_time - now_time).total_seconds() / 60
+                    diff = (l_time - now_time).total_seconds() / 60
+                    
+                    print(f"⏰ [DEBUG] Lesson {lesson['name']} at {lesson['time']}, Diff: {diff} mins.")
 
-                    trigger_key = f"{current_date_str}_{current_time_str}"
-                    if 0 <= diff_minutes <= int(lesson["remind_before"]) and lesson.get("last_triggered") != trigger_key:
-                        lesson["last_triggered"] = trigger_key
-                        is_triggered = True
-                        for sub_id in subs:
-                            try:
-                                bot.send_message(
-                                    int(sub_id),
-                                    f"🔔 <b>تَذْكِيرٌ بِمَوْعِدِ حِصَّةٍ شَرْعِيَّةٍ!</b>\n\n"
-                                    f"📚 <b>الْحِصَّة:</b> {lesson['name']}\n"
-                                    f"⏰ <b>الْمَوْعِد:</b> {lesson['time']}\n"
-                                    f"🌿 <b>بَقِيَ عَلَى الْحِصَّةِ:</b> {int(diff_minutes)} دَقِيقَة.\n\n"
-                                    f"جَهِّزُوا أَنْفُسَكُمْ وَاحْرِصُوا عَلَى الْحُضُورِ نَفَعَ اللَّهُ بِكُمْ.",
-                                    parse_mode="HTML"
-                                )
-                            except:
-                                pass
+                    if 0 <= diff <= int(lesson.get("remind_before", 5)):
+                        trigger_key = f"{current_date_str}_{current_time_str}"
+                        if lesson.get("last_triggered") != trigger_key:
+                            lesson["last_triggered"] = trigger_key
+                            
+                            # الإرسال
+                            for sub_id in subs:
+                                try:
+                                    bot.send_message(int(sub_id), f"🔔 تذكير: {lesson['name']} يبدأ بعد {int(diff)} دقيقة.")
+                                except Exception as e:
+                                    print(f"❌ [DEBUG] Failed to send to {sub_id}: {e}")
+                                    
+                            # الحذف التلقائي للمرة الواحدة
+                            if recurrence == "مرة واحدة":
+                                print(f"🗑️ [DEBUG] Removing one-time lesson: {lesson['name']}")
+                                continue 
                 except Exception as e:
-                    print(f"Error checking lesson time: {e}")
+                    print(f"⚠️ [DEBUG] Error in lesson calculation: {e}")
             
-            # الحذف التلقائي للحصص التي حددت لمرة واحدة بعد الإرسال الناجح
-            if is_triggered and recurrence == "مرة واحدة":
-                continue
-
             updated_lessons.append(lesson)
+        
         redis_client.set(f"group:{cid_str}:lessons", json.dumps(updated_lessons))
 
-    return "Reminders verified successfully!", 200
+    return "Check completed.", 200
 
 # =====================================
 # بَيَانَاتُ الْمَجْمُوعَةِ السَّحَابِيَّةِ
@@ -970,3 +954,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
