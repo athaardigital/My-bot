@@ -320,7 +320,7 @@ def main_keyboard(chat_id):
     
     keyboard.add(
         types.InlineKeyboardButton("📝 تَسْجِيلُ اسْمِي", callback_data="register_menu"),
-        types.InlineKeyboardButton("✅ تَمَّ الْقِرَاءَةُ", callback_data="done")
+        types.InlineKeyboardButton("✅ تَمَّتِ الْقِرَاءَةُ", callback_data="done")
     )
     
     if group.get("allow_extra_turns", False):
@@ -365,7 +365,7 @@ def settings_keyboard(chat_id):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton(state_button, callback_data="toggle"))
     keyboard.add(types.InlineKeyboardButton(extra_button, callback_data="toggle_extra"))
-    keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْآرِ (التَّرْتِيبِ)", callback_data="manage_roles"))
+    keyboard.add(types.InlineKeyboardButton("🔄 تَغْيِيرُ الْأَدْوَارِ (التَّرْتِيبِ)", callback_data="manage_roles"))
     keyboard.add(types.InlineKeyboardButton("📊 إِحْصَاءُ الْحِصَّةِ", callback_data="stats"))
     keyboard.add(types.InlineKeyboardButton("🔔 الْحِصَص", callback_data="manage_lessons"))
     keyboard.add(types.InlineKeyboardButton("🔄 إِرْسَالُ آخِرِ قَائِمَةٍ", callback_data="refresh"))  
@@ -880,7 +880,7 @@ def callbacks(call):
 
     elif call.data == "lessons_add_info":
         form_text = (
-            "➕ <b>إِسْتِمَارَةُ جَدْوَلَةِ مَجْلِسٍ جَدِيدٍ:</b>\n\n"
+            "➕ <b>اِسْتِمَارَةُ جَدْوَلَةِ مَجْلِسٍ جَدِيدٍ:</b>\n\n"
             "لِإِضَافَةِ مَجْلِسٍ، قُمْ بِنَسْخِ الِاسْتِمَارَةِ أَدْنَاهُ وَمَلْءِ بَيَانَاتِهَا ثُمَّ أَرْسِلْهَا كَرِسَالَةٍ عَادِيَّةٍ دَاخِلَ الْمَجْمُوعَةِ:\n\n"
             "<code>/lesson</code>\n"
             "<code>اِسْمُ الْمَجْلِسِ</code>\n"
@@ -983,7 +983,7 @@ def callbacks(call):
         for i, r in enumerate(group["readers"]):
             if i != idx:
                 keyboard.add(types.InlineKeyboardButton(f"تَبْدِيلٌ مَعَ: {i+1}. {r['name']}", callback_data=f"doswap:{idx}:{i}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 أَوَّلٌ", callback_data=f"edit_turn:{idx}"))
+        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data=f"edit_turn:{idx}"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"🔄 <b>اخْتَرْ دَوْراً لِتَبْدِيلِ الْمَرَاكِزِ مَعَ ({target_name}):</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
 
@@ -1014,4 +1014,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
