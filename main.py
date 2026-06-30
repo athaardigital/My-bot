@@ -3,7 +3,7 @@ import time
 import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from flask import Flask, request
+from flask import Flask, request, abort
 from dotenv import load_dotenv
 
 import telebot
@@ -46,6 +46,8 @@ redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 # =====================================
 
 app = Flask(__name__)
+# جَلْبُ الْمِفْتَاحِ مِنَ الإِعْدَادَاتِ
+SECRET_KEY = os.environ.get("CRON_SECRET_KEY")
 
 def get_arabic_day_name(weekday_idx):
     days = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
@@ -81,6 +83,11 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
+    # الْتَّحَقُّقُ مِنَ الْهيدر (Header)
+    if request.headers.get("X-Cron-Key") != SECRET_KEY:
+        # إِذَا كَانَ الْمِفْتَاحُ خَطَأً أَوْ غَيْرَ مَوْجُودٍ، اقْطَعِ الِاتِّصَالَ
+        abort(403) 
+
     print("🔄 [DEBUG] Running reminder check...")
     group_ids = redis_client.smembers("active_groups")
     
