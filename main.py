@@ -315,7 +315,7 @@ def settings_keyboard(chat_id):
     keyboard.add(types.InlineKeyboardButton(extra_button, callback_data="toggle_extra"))
     keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْوَارِ (التَّرْتِيبِ)", callback_data="manage_roles"))
     keyboard.add(types.InlineKeyboardButton("📊 إِحْصَاءُ الْحِصَّةِ", callback_data="stats"))
-    keyboard.add(types.InlineKeyboardButton("🔔 عَرْضُ الْحِصَصِ الْمُسْجَّلَةِ", callback_data="view_lessons"))
+    keyboard.add(types.InlineKeyboardButton("🔔 الْحِصَص", callback_data="manage_lessons"))
     keyboard.add(types.InlineKeyboardButton("🔄 إِعَادَةُ إِرْسَالِ الْقَائِمَةِ", callback_data="refresh"))
     keyboard.add(types.InlineKeyboardButton("📢 الْمُنَادَاةُ", callback_data="call"))
     keyboard.add(types.InlineKeyboardButton("🔄 إِعَادَةُ ضَبْطِ الْقَائِمَةِ", callback_data="reset"))
@@ -404,7 +404,7 @@ def start(message):
 
         bot.send_message(
             message.chat.id,
-            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\nحَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْمِ.\n\n"
+            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\nحَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
             "📢 <b>تَنْبِيه:</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
             "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
             "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ."
@@ -451,7 +451,7 @@ def add_lesson(message):
     if not parts:
         bot.send_message(
             message.chat.id,
-            "ℹ️ <b>طَرِيقَةُ إِضَافَةِ حِصَّةٍ شَرْعِيَّةٍ (سَطْراً بِسَطْرٍ):</b>\n\n"
+            "ℹ️ <b>طَرِيقَةُ إِضَافَةِ حِصَّةٍ شَرْعِيَّةٍ (سَطْراً بِسَطْراً):</b>\n\n"
             "<code>/lesson</code>\n"
             "<code>اسم الحصة</code>\n"
             "<code>اليوم أو التاريخ (مثال: 2026-06-30)</code>\n"
@@ -582,10 +582,14 @@ def callbacks(call):
     member = {"id": str(user.id), "name": full_name}
     user_id_str = str(user.id)
 
-    admin_callbacks = ["settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", "reset", "call", "view_lessons", "delete_group_all"]
-    if call.data in admin_callbacks or call.data.startswith(("edit_turn:", "move_up:", "move_down:", "swap_turn:", "doswap:")):
+    admin_callbacks = [
+        "settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", 
+        "reset", "call", "view_lessons", "delete_group_all", "manage_lessons", 
+        "lessons_delete_menu", "delete_specific_lesson_menu", "delete_all_lessons", "lessons_add_info"
+    ]
+    if call.data in admin_callbacks or call.data.startswith(("edit_turn:", "move_up:", "move_down:", "swap_turn:", "doswap:", "del_lesson:")):
         if not is_admin(user.id, chat_id):
-            bot.answer_checkpoint_error = bot.answer_callback_query(call.id, "❌ عُذْراً! هَذِهِ الْإِعْدَادَاتُ مَحْصُورَةٌ لِلْمُشْرِفِينَ فَقَطْ.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ عُذْراً! هَذِهِ الْإِعْدَادَاتُ مَحْصُورَةٌ لِلْمُشْرِفِينَ فَقَطْ.", show_alert=True)
             return
 
     if call.data == "register_menu":
@@ -704,15 +708,107 @@ def callbacks(call):
         bot.send_message(chat_id, stats_text, parse_mode="HTML")
         bot.answer_callback_query(call.id)
 
+    elif call.data == "manage_lessons":
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton("📊 عَرْضُ الْمَجَالِسِ الْحَالِيَّةِ", callback_data="view_lessons"),
+            types.InlineKeyboardButton("🗑️ حَذْفٌ", callback_data="lessons_delete_menu"),
+            types.InlineKeyboardButton("➕ إِضَافَةُ مَجْلِسٍ", callback_data="lessons_add_info"),
+            types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+        bot.answer_callback_query(call.id)
+
     elif call.data == "view_lessons":
         lessons_data = redis_client.get(f"group:{chat_id}:lessons")
         lessons = json.loads(lessons_data) if lessons_data else []
-        txt = "🔔 <b>حِصَصُ الْمَجْلِسِ الْمُسْجَّلَةِ:</b>\n\n"
-        if not lessons: txt += "لَا يُوجَدُ حِصَصٌ حَالِيّاً."
+        txt = "🔔 <b>الْمَجَالِسُ وَالْحِصَصُ الْحَالِيَّةُ الْمُسَجَّلَةُ:</b>\n\n"
+        if not lessons:
+            txt += "لَا يُوجَدُ مَجَالِسُ مُسَجَّلَةٌ حَالِيّاً."
         for i, l in enumerate(lessons, start=1):
             rec = l.get("recurrence", "مرة واحدة")
             txt += f"{i}. {l['name']} | 📅 {l['day_or_date']} | ⏰ {l['time']} ({rec})\n"
-        bot.send_message(chat_id, txt, parse_mode="HTML")
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=txt, parse_mode="HTML", reply_markup=keyboard)
+        bot.answer_callback_query(call.id)
+
+    elif call.data == "lessons_delete_menu":
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton("❌ حَذْفُ مَجْلِسٍ مَا", callback_data="delete_specific_lesson_menu"),
+            types.InlineKeyboardButton("🔥 حَذْفُ الْجَمِيعِ", callback_data="delete_all_lessons"),
+            types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🗑️ <b>اخْتَرْ خِيَارَ الْحَذْفِ الْمَطْلُوبِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+        bot.answer_callback_query(call.id)
+
+    elif call.data == "delete_specific_lesson_menu":
+        lessons_data = redis_client.get(f"group:{chat_id}:lessons")
+        lessons = json.loads(lessons_data) if lessons_data else []
+        if not lessons:
+            bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ مَجَالِسُ لِحَذْفِهَا!", show_alert=True)
+            return
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        for i, l in enumerate(lessons):
+            keyboard.add(types.InlineKeyboardButton(f"{i+1}. {l['name']}", callback_data=f"del_lesson:{i}"))
+        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="lessons_delete_menu"))
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ <b>اخْتَرْ الْمَجْلِسَ الَّذِي Tُرِيدُ حَذْفَهُ مِنَ الْقَائِمَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+        bot.answer_callback_query(call.id)
+
+    elif call.data.startswith("del_lesson:"):
+        idx = int(call.data.split(":")[1])
+        lessons_data = redis_client.get(f"group:{chat_id}:lessons")
+        lessons = json.loads(lessons_data) if lessons_data else []
+        if idx < len(lessons):
+            removed_name = lessons[idx]['name']
+            lessons.pop(idx)
+            redis_client.set(f"group:{chat_id}:lessons", json.dumps(lessons))
+            bot.answer_callback_query(call.id, f"✅ تَمَّ حَذْفُ مَجْلِسِ ({removed_name}) بِنَجَاحٍ.", show_alert=True)
+            if lessons:
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                for i, l in enumerate(lessons):
+                    keyboard.add(types.InlineKeyboardButton(f"{i+1}. {l['name']}", callback_data=f"del_lesson:{i}"))
+                keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="lessons_delete_menu"))
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ <b>اخْتَرْ الْمَجْلِسَ الَّذِي تُرِيدُ حَذْفَهُ مِنَ الْقَائِمَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+            else:
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                keyboard.add(
+                    types.InlineKeyboardButton("📊 عَرْضُ الْمَجَالِسِ الْحَالِيَّةِ", callback_data="view_lessons"),
+                    types.InlineKeyboardButton("🗑️ حَذْفٌ", callback_data="lessons_delete_menu"),
+                    types.InlineKeyboardButton("➕ إِضَافَةُ مَجْلِسٍ", callback_data="lessons_add_info"),
+                    types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings")
+                )
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+        else:
+            bot.answer_callback_query(call.id, "⚠️ هَذَا الْمَجْلِسُ لَمْ يَعُدْ مَوْجُوداً.", show_alert=True)
+
+    elif call.data == "delete_all_lessons":
+        redis_client.set(f"group:{chat_id}:lessons", json.dumps([]))
+        bot.answer_callback_query(call.id, "🔥 تَمَّ حَذْفُ جَمِيعِ الْمَجَالِسِ وَالْحِصَصِ نِهَائِيّاً.", show_alert=True)
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton("📊 عَرْضُ الْمَجَالِسِ الْحَالِيَّةِ", callback_data="view_lessons"),
+            types.InlineKeyboardButton("🗑️ حَذْفٌ", callback_data="lessons_delete_menu"),
+            types.InlineKeyboardButton("➕ إِضَافَةُ مَجْلِسٍ", callback_data="lessons_add_info"),
+            types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+
+    elif call.data == "lessons_add_info":
+        form_text = (
+            "➕ <b>إِسْتِمَارَةُ جَدْوَلَةِ مَجْلِسٍ جَدِيدٍ:</b>\n\n"
+            "لِإِضَافَةِ مَجْلِسٍ، قُمْ بِنَسْخِ الِاسْتِمَارَةِ أَدْنَاهُ وَمَلْءِ بَيَانَاتِهَا ثُمَّ أَرْسِلْهَا كَرِسَالَةٍ عادِيَّةٍ دَاخِلَ الْمَجْمُوعَةِ:\n\n"
+            "<code>/lesson</code>\n"
+            "<code>اِسْمُ الْمَجْلِسِ</code>\n"
+            "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30 أَوْ الْجُمُعَة)</code>\n"
+            "<code>الْوَقْتُ (بِتَنْسِيقِ 24 سَاعَة مِثَال: 15:30)</code>\n"
+            "<code>دَقَائِقُ التَّنْبِيهِ قَبْلَ الْمَوْعِدِ (مِثَال: 15)</code>\n"
+            "<code>التَّكْرَارُ (مرة واحدة | يوميا | أسبوعيا)</code>"
+        )
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=form_text, parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
 
     elif call.data == "reset":
@@ -724,7 +820,6 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "🔄 تَمَّتْ إِعَادَةُ ضَبْطِ الْمَجْلِسِ تَمَاماً.", show_alert=True)
 
     elif call.data == "delete_group_all":
-        # حَذْفُ الْمَجْلِسِ كُلِّيّاً لِكَيْ لَا يَظْهَرَ لِلْمُحَرِّكِ أَوْ الطُّلَّابِ
         redis_client.srem("active_groups", str(chat_id))
         redis_client.delete(f"group:{chat_id}")
         redis_client.delete(f"group:{chat_id}:lessons")
@@ -827,3 +922,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
