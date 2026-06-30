@@ -56,7 +56,6 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
-    """مُحَرِّكُ التَّنْبِيهَاتِ الْمَجَّانِيِّ الَّذِي يَتِمُّ اسْتِدْعَاؤُهُ عَبْرَ الـ Cron Job"""
     group_ids = redis_client.smembers("active_groups")
     if not group_ids:
         return "No active groups found.", 200
@@ -134,7 +133,7 @@ def check_reminders():
 def default_group():
     return {
         "message_id": None,
-        "list_open": True,  # تَمَّ التَّعْدِيلُ: الْقَائِمَةُ مَفْتُوحَةٌ تِلْقَائِيّاً عِنْدَ التَّفْعِيلِ
+        "list_open": True,  
         "allow_extra_turns": False,
         "readers": [],      
         "listeners": [],    
@@ -166,14 +165,21 @@ def save_group(chat_id, group):
     redis_client.set(f"group:{str(chat_id)}", json.dumps(group))
 
 # =====================================
-# الصَّلَاحِيَّاتُ
+# الصَّلَاحِيَّاتُ (تَمَّ التَّعْدِيلُ وَالْإِحْكَامُ هُنَا)
 # =====================================
 
 def is_admin(user_id, chat_id):
+    # إِذَا كَانَ الْمُسْتَخْدِمُ مَشْرِفاً مَخْفِيّاً (Anonymous Bot ID) يُعْتَبَرُ مُشْرِفاً تِلْقَائِيّاً
+    if str(user_id) == "1087968824":
+        return True
     try:
-        member = bot.get_chat_member(chat_id, user_id)
-        # تَمَّ التَّأْكِيدُ عَلَى أَنَّ الـ creator (الْمَالِك) وَالـ administrator مُشْرِفُونَ تِلْقَائِيّاً
-        return member.status in ["administrator", "creator"]
+        member = bot.get_chat_member(int(chat_id), int(user_id))
+        # التَّحَقُّقُ مِنْ جَمِيعِ صِيَغِ الْمُشْرِفِ وَالْمَالِكِ لِضَمَانِ التَّعَرُّفِ الْكَامِلِ
+        if member.status in ["administrator", "creator", "owner"]:
+            return True
+        if type(member).__name__ in ["ChatMemberOwner", "ChatMemberAdministrator"]:
+            return True
+        return False
     except:
         return False
 
@@ -205,7 +211,6 @@ def make_board(chat_id):
     state = "🟢 مَفْتُوحَة" if group.get("list_open", False) else "🔴 مُغْلَقَة"
     extra_state = "🟢 مَسْمُوحَة" if group.get("allow_extra_turns", False) else "🔴 مَمْنُوعَة"
 
-    # تَمَّ حَذْفُ إِيمُوجِي النُّجُومِ (✨) مِنْ هُنَا
     text = (
         f"📅 <b>التَّارِيخ:</b> {today_str}\n\n"
         "<blockquote>اعْلَمْ رَعَاكَ اللَّهُ أَنَّ حُضُورَكَ مَجَالِسَ الْعِلْمِ النَّافِعِ "
@@ -318,10 +323,9 @@ def settings_keyboard(chat_id):
     keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْوَارِ (التَّرْتِيبِ)", callback_data="manage_roles"))
     keyboard.add(types.InlineKeyboardButton("📊 إِحْصَاءُ الْحِصَّةِ", callback_data="stats"))
     keyboard.add(types.InlineKeyboardButton("🔔 الْحِصَص", callback_data="manage_lessons"))
-    keyboard.add(types.InlineKeyboardButton("🔄 إِرْسَالُ آخِرِ قَائِمَةٍ", callback_data="refresh"))  # تَمَّ التَّعْدِيلُ
+    keyboard.add(types.InlineKeyboardButton("🔄 إِرْسَالُ آخِرِ قَائِمَةٍ", callback_data="refresh"))  
     keyboard.add(types.InlineKeyboardButton("📢 الْمُنَادَاةُ", callback_data="call"))
-    keyboard.add(types.InlineKeyboardButton("🔄 تَصْفِيرُ الْقَائِمَةِ", callback_data="reset"))  # تَمَّ التَّعْدِيلُ
-    # تَمَّ حَذْفُ زِرِّ حَذْفِ الْمَجْلِسِ كُلِّيّاً كَمَا طَلَبْتِ
+    keyboard.add(types.InlineKeyboardButton("🔄 تَصْفِيرُ الْقَائِمَةِ", callback_data="reset"))  
     keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْمَجْلِسِ", callback_data="back_to_main"))
 
     return keyboard
@@ -819,7 +823,6 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَصْفِيرُ الْقَائِمَةِ تَمَاماً.", show_alert=True)
 
     elif call.data == "delete_group_all":
-        # تَمَّ إِبْقَاءُ الْمَنْطِقِ هُنَا لِتَفَادِي تَعَطُّلِ الرَّسَائِلِ الْقَدِيمَةِ، لَكِنَّ الزِّرَّ حُذِفَ مِنَ اللَّوْحَةِ نِهَائِيّاً
         redis_client.srem("active_groups", str(chat_id))
         redis_client.delete(f"group:{chat_id}")
         redis_client.delete(f"group:{chat_id}:lessons")
@@ -836,7 +839,6 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "✅ تم حذف المجلس وإلغاء التنبيهات نهائياً.", show_alert=True)
 
     elif call.data == "call":
-        # تَمَّ التَّعْدِيلُ: الْإِشْعَارُ يُرْسَلُ فَقَطْ لِمَنْ ضَغَطَ زِرَّ "سْتَارْت" وَفَعَّلَ التَّنْبِيهَاتِ لِهَذِهِ الْمَجْمُوعَةِ بِالذَّاتِ
         subs_data = redis_client.get(f"group:{chat_id}:subscribers")
         subs = json.loads(subs_data) if subs_data else []
         
@@ -931,4 +933,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
