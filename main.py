@@ -56,7 +56,7 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
-    """مَحَرِّكُ التَّنْبِيهَاتِ الْمَجَّانِيِّ الَّذِي يَتِمُّ اسْتِدْعَاؤُهُ عَبْرَ الـ Cron Job"""
+    """مُحَرِّكُ التَّنْبِيهَاتِ الْمَجَّانِيِّ الَّذِي يَتِمُّ اسْتِدْعَاؤُهُ عَبْرَ الـ Cron Job"""
     group_ids = redis_client.smembers("active_groups")
     if not group_ids:
         return "No active groups found.", 200
@@ -134,7 +134,7 @@ def check_reminders():
 def default_group():
     return {
         "message_id": None,
-        "list_open": False,
+        "list_open": True,  # تَمَّ التَّعْدِيلُ: الْقَائِمَةُ مَفْتُوحَةٌ تِلْقَائِيّاً عِنْدَ التَّفْعِيلِ
         "allow_extra_turns": False,
         "readers": [],      
         "listeners": [],    
@@ -172,6 +172,7 @@ def save_group(chat_id, group):
 def is_admin(user_id, chat_id):
     try:
         member = bot.get_chat_member(chat_id, user_id)
+        # تَمَّ التَّأْكِيدُ عَلَى أَنَّ الـ creator (الْمَالِك) وَالـ administrator مُشْرِفُونَ تِلْقَائِيّاً
         return member.status in ["administrator", "creator"]
     except:
         return False
@@ -204,12 +205,13 @@ def make_board(chat_id):
     state = "🟢 مَفْتُوحَة" if group.get("list_open", False) else "🔴 مُغْلَقَة"
     extra_state = "🟢 مَسْمُوحَة" if group.get("allow_extra_turns", False) else "🔴 مَمْنُوعَة"
 
+    # تَمَّ حَذْفُ إِيمُوجِي النُّجُومِ (✨) مِنْ هُنَا
     text = (
         f"📅 <b>التَّارِيخ:</b> {today_str}\n\n"
         "<blockquote>اعْلَمْ رَعَاكَ اللَّهُ أَنَّ حُضُورَكَ مَجَالِسَ الْعِلْمِ النَّافِعِ "
         "هُوَ مَحْضُ اصْطِفَاءٍ مِنْ رَبِّكَ، فَاحْمَدْهُ عَلَى هَذِهِ النِّعْمَةِ "
         "وَأَحْسِنْ رِعَايَتَهَا.</blockquote>\n\n"
-        "✨ <b>قَائِمَةُ تِلَاوَةِ الْقُرْآنِ الْكَرِيمِ لِلْمَجْلِسِ الْحَالِيِّ</b> ✨\n\n"
+        "<b>قَائِمَةُ تِلَاوَةِ الْقُرْآنِ الْكَرِيمِ لِلْمَجْلِسِ الْحَالِيِّ</b>\n\n"
     )
 
     text += "━━━━━━━━━━━━━━━\n"
@@ -316,10 +318,10 @@ def settings_keyboard(chat_id):
     keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْوَارِ (التَّرْتِيبِ)", callback_data="manage_roles"))
     keyboard.add(types.InlineKeyboardButton("📊 إِحْصَاءُ الْحِصَّةِ", callback_data="stats"))
     keyboard.add(types.InlineKeyboardButton("🔔 الْحِصَص", callback_data="manage_lessons"))
-    keyboard.add(types.InlineKeyboardButton("🔄 إِعَادَةُ إِرْسَالِ الْقَائِمَةِ", callback_data="refresh"))
+    keyboard.add(types.InlineKeyboardButton("🔄 إِرْسَالُ آخِرِ قَائِمَةٍ", callback_data="refresh"))  # تَمَّ التَّعْدِيلُ
     keyboard.add(types.InlineKeyboardButton("📢 الْمُنَادَاةُ", callback_data="call"))
-    keyboard.add(types.InlineKeyboardButton("🔄 إِعَادَةُ ضَبْطِ الْقَائِمَةِ", callback_data="reset"))
-    keyboard.add(types.InlineKeyboardButton("🗑️ حَذْفُ الْمَجْلِسِ كُلِّيّاً", callback_data="delete_group_all"))
+    keyboard.add(types.InlineKeyboardButton("🔄 تَصْفِيرُ الْقَائِمَةِ", callback_data="reset"))  # تَمَّ التَّعْدِيلُ
+    # تَمَّ حَذْفُ زِرِّ حَذْفِ الْمَجْلِسِ كُلِّيّاً كَمَا طَلَبْتِ
     keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْمَجْلِسِ", callback_data="back_to_main"))
 
     return keyboard
@@ -386,7 +388,6 @@ def start(message):
         if len(args) > 1 and args[1].startswith("sub_"):
             target_chat_id = args[1].replace("sub_", "")
             
-            # طَلَبُ الْمُوَافَقَةِ الصَّرِيحَةِ أَوَّلاً عَبْرَ أزرارِ التَّرْحِيبِ حِفْظاً لِلْخُصُوصِيَّةِ
             keyboard = types.InlineKeyboardMarkup(row_width=1)
             keyboard.add(
                 types.InlineKeyboardButton("✅ نَعَمْ، أُوَافِقُ وَأُرِيدُ التَّنْبِيهَاتِ", callback_data=f"confsub:{target_chat_id}"),
@@ -533,7 +534,6 @@ def add_lesson(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
-    # 1. التَّعَامُلُ مَعَ كُولْبَاك الْمُوَافَقَةِ وَالِاشْتِرَاكِ فِي الْخَاصِّ أَوَّلاً تَمَاماً
     if call.data.startswith("confsub:"):
         target_chat_id = call.data.split(":")[1]
         subs_data = redis_client.get(f"group:{target_chat_id}:subscribers")
@@ -570,7 +570,6 @@ def callbacks(call):
         bot.answer_callback_query(call.id)
         return
 
-    # 2. مَنْطِقُ الْمَجْمُوعَاتِ الِاعْتِيَادِيِّ
     chat_id = call.message.chat.id
     group = get_group(chat_id)
     user = call.from_user
@@ -696,7 +695,7 @@ def callbacks(call):
         sent = bot.send_message(chat_id, make_board(chat_id), parse_mode="HTML", reply_markup=main_keyboard(chat_id))
         group["message_id"] = sent.message_id
         save_group(chat_id, group)
-        bot.answer_callback_query(call.id, "🔄 تَمَّتْ إِعَادَةُ إِرْسَالِ الْقَائِمَةِ.")
+        bot.answer_callback_query(call.id, "🔄 تَمَّ إِرْسَالُ آخِرِ قَائِمَةٍ.", show_alert=True)
 
     elif call.data == "stats":
         readers = group.get("readers", [])
@@ -753,7 +752,7 @@ def callbacks(call):
         for i, l in enumerate(lessons):
             keyboard.add(types.InlineKeyboardButton(f"{i+1}. {l['name']}", callback_data=f"del_lesson:{i}"))
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="lessons_delete_menu"))
-        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ <b>اخْتَرْ الْمَجْلِسَ الَّذِي Tُرِيدُ حَذْفَهُ مِنَ الْقَائِمَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ <b>اخْتَرْ الْمَجْلِسَ الَّذِي تُرِيدُ حَذْفَهُ مِنَ الْقَائِمَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("del_lesson:"):
@@ -817,9 +816,10 @@ def callbacks(call):
         group["message_id"] = old_message
         save_group(chat_id, group)
         update_board(chat_id)
-        bot.answer_callback_query(call.id, "🔄 تَمَّتْ إِعَادَةُ ضَبْطِ الْمَجْلِسِ تَمَاماً.", show_alert=True)
+        bot.answer_callback_query(call.id, "🔄 تَمَّ تَصْفِيرُ الْقَائِمَةِ تَمَاماً.", show_alert=True)
 
     elif call.data == "delete_group_all":
+        # تَمَّ إِبْقَاءُ الْمَنْطِقِ هُنَا لِتَفَادِي تَعَطُّلِ الرَّسَائِلِ الْقَدِيمَةِ، لَكِنَّ الزِّرَّ حُذِفَ مِنَ اللَّوْحَةِ نِهَائِيّاً
         redis_client.srem("active_groups", str(chat_id))
         redis_client.delete(f"group:{chat_id}")
         redis_client.delete(f"group:{chat_id}:lessons")
@@ -828,7 +828,7 @@ def callbacks(call):
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="🗑️ <b>تَمَّ حَذْفُ هَذَا الْمَجْلِسِ كُلِّيّاً مِنَ النِّظَامِ وَإِلْغَاءُ كَافَّةِ التَّنْبِيهَاتِ الْمُرْتَبِطَةِ بِهِ.</b>",
+                text="🗑️ <b>تَمَّ حَذْفُ هَذَا الْمَجْلِسِ كُلِّيّاً مِنَ النِّظَامِ.</b>",
                 parse_mode="HTML"
             )
         except:
@@ -836,11 +836,20 @@ def callbacks(call):
         bot.answer_callback_query(call.id, "✅ تم حذف المجلس وإلغاء التنبيهات نهائياً.", show_alert=True)
 
     elif call.data == "call":
-        all_members = group.get("readers", []) + group.get("listeners", []) + group.get("excused", [])
-        for mem in all_members:
-            try: bot.send_message(int(mem["id"]), "هَلُمُّوا لِمَجْلِسٍ تَحُفُّهُ الْمَلَائِكَةُ 🌿")
-            except: pass
-        bot.answer_callback_query(call.id, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِلْجَمِيعِ.", show_alert=True)
+        # تَمَّ التَّعْدِيلُ: الْإِشْعَارُ يُرْسَلُ فَقَطْ لِمَنْ ضَغَطَ زِرَّ "سْتَارْت" وَفَعَّلَ التَّنْبِيهَاتِ لِهَذِهِ الْمَجْمُوعَةِ بِالذَّاتِ
+        subs_data = redis_client.get(f"group:{chat_id}:subscribers")
+        subs = json.loads(subs_data) if subs_data else []
+        
+        if not subs:
+            bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ مُشْتَرِكُونَ نَشِطُونَ فِي تَنْبِيهَاتِ هَذِهِ الْمَجْمُوعَةِ حَالِيّاً.", show_alert=True)
+            return
+
+        for sub_id in subs:
+            try: 
+                bot.send_message(int(sub_id), "هَلُمُّوا لِمَجْلِسٍ تَحُفُّهُ الْمَلَائِكَةُ 🌿")
+            except: 
+                pass
+        bot.answer_callback_query(call.id, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.", show_alert=True)
 
     elif call.data == "manage_roles":
         show_manage_roles(call, chat_id, group)
