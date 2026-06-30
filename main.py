@@ -1,7 +1,9 @@
+
 import os
 import time
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from flask import Flask, request
 from dotenv import load_dotenv
 
@@ -43,6 +45,23 @@ def get_arabic_day_name(weekday_idx):
     days = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
     return days[weekday_idx]
 
+def get_tz_by_country(country_name):
+    country_name = country_name.strip()
+    mapping = {
+        "الجزائر": "Africa/Algiers",
+        "السعودية": "Asia/Riyadh",
+        "مصر": "Africa/Cairo",
+        "الأردن": "Asia/Amman",
+        "الإمارات": "Asia/Dubai",
+        "العراق": "Asia/Baghdad",
+        "المغرب": "Africa/Casablanca",
+        "تunes": "Africa/Tunis",
+        "الكويت": "Asia/Kuwait",
+        "قطر": "Asia/Qatar",
+        "فلسطين": "Asia/Gaza"
+    }
+    return mapping.get(country_name, "Africa/Algiers")
+
 @app.route("/")
 def home():
     return "Bot is running securely on Upstash Redis!", 200
@@ -60,11 +79,6 @@ def check_reminders():
     if not group_ids:
         return "No active groups found.", 200
 
-    now = datetime.now()
-    current_day_ar = get_arabic_day_name(now.weekday())
-    current_date_str = now.strftime("%Y-%m-%d")
-    current_time_str = now.strftime("%H:%M")
-
     for cid in group_ids:
         cid_str = str(cid)
         lessons_data = redis_client.get(f"group:{cid_str}:lessons")
@@ -79,6 +93,18 @@ def check_reminders():
         for lesson in lessons:
             recurrence = lesson.get("recurrence", "مرة واحدة").strip()
             day_or_date = lesson.get("day_or_date", "").strip()
+            country = lesson.get("country", "الجزائر").strip()
+
+            # جلب النطاق الزمني الصحيح حسب الدولة المستهدفة
+            tz_name = get_tz_by_country(country)
+            try:
+                now = datetime.now(ZoneInfo(tz_name))
+            except:
+                now = datetime.now(ZoneInfo("Africa/Algiers"))
+
+            current_day_ar = get_arabic_day_name(now.weekday())
+            current_date_str = now.strftime("%Y-%m-%d")
+            current_time_str = now.strftime("%H:%M")
 
             is_today = False
             if recurrence == "يوميا":
@@ -97,6 +123,7 @@ def check_reminders():
                 if day_or_date == current_date_str or day_or_date == current_day_ar:
                     is_today = True
 
+            is_triggered = False
             if is_today:
                 try:
                     l_time = datetime.strptime(lesson["time"], "%H:%M")
@@ -106,6 +133,7 @@ def check_reminders():
                     trigger_key = f"{current_date_str}_{current_time_str}"
                     if 0 <= diff_minutes <= int(lesson["remind_before"]) and lesson.get("last_triggered") != trigger_key:
                         lesson["last_triggered"] = trigger_key
+                        is_triggered = True
                         for sub_id in subs:
                             try:
                                 bot.send_message(
@@ -121,6 +149,11 @@ def check_reminders():
                                 pass
                 except Exception as e:
                     print(f"Error checking lesson time: {e}")
+            
+            # الحذف التلقائي للحصص التي حددت لمرة واحدة بعد الإرسال الناجح
+            if is_triggered and recurrence == "مرة واحدة":
+                continue
+
             updated_lessons.append(lesson)
         redis_client.set(f"group:{cid_str}:lessons", json.dumps(updated_lessons))
 
@@ -165,16 +198,14 @@ def save_group(chat_id, group):
     redis_client.set(f"group:{str(chat_id)}", json.dumps(group))
 
 # =====================================
-# الصَّلَاحِيَّاتُ (تَمَّ التَّعْدِيلُ وَالْإِحْكَامُ هُنَا)
+# الصَّلَاحِيَّاتُ
 # =====================================
 
 def is_admin(user_id, chat_id):
-    # إِذَا كَانَ الْمُسْتَخْدِمُ مَشْرِفاً مَخْفِيّاً (Anonymous Bot ID) يُعْتَبَرُ مُشْرِفاً تِلْقَائِيّاً
     if str(user_id) == "1087968824":
         return True
     try:
         member = bot.get_chat_member(int(chat_id), int(user_id))
-        # التَّحَقُّقُ مِنْ جَمِيعِ صِيَغِ الْمُشْرِفِ وَالْمَالِكِ لِضَمَانِ التَّعَرُّفِ الْكَامِلِ
         if member.status in ["administrator", "creator", "owner"]:
             return True
         if type(member).__name__ in ["ChatMemberOwner", "ChatMemberAdministrator"]:
@@ -411,7 +442,7 @@ def start(message):
             message.chat.id,
             "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\nحَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
             "📢 <b>تَنْبِيه:</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
-            "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
+            "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقضاة هُنَا.\n\n"
             "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ."
         )
         return
@@ -462,7 +493,8 @@ def add_lesson(message):
             "<code>اليوم أو التاريخ (مثال: 2026-06-30)</code>\n"
             "<code>الوقت (مثال: 15:00)</code>\n"
             "<code>دقائق التذكير (مثال: 15)</code>\n"
-            "<code>التكرار (مرة واحدة | يوميا | أسبوعيا)</code>",
+            "<code>التكرار (مرة واحدة | يوميا | أسبوعيا)</code>\n"
+            "<code>الدولة لضبط التوقيت (مثال: الجزائر | السعودية)</code>",
             parse_mode="HTML"
         )
         return
@@ -476,6 +508,7 @@ def add_lesson(message):
     l_time = parts[2].replace(" ", "")
     remind_before = parts[3].replace(" ", "")
     recurrence = parts[4].strip() if len(parts) > 4 else "مرة واحدة"
+    country = parts[5].strip() if len(parts) > 5 else "الجزائر"
     
     if "يوم" in recurrence:
         recurrence = "يوميا"
@@ -512,6 +545,7 @@ def add_lesson(message):
         "time": l_time,
         "remind_before": remind_before,
         "recurrence": recurrence,
+        "country": country,
         "last_triggered": ""
     }
     
@@ -528,7 +562,8 @@ def add_lesson(message):
         f"📚 <b>الْحِصَّة:</b> {name}\n"
         f"📅 <b>الْمَوْعِد:</b> {day_or_date} عِنْدَ {l_time}\n"
         f"🔔 <b>التَّذْكِير:</b> قَبْلَهَا بِـ {remind_before} دَقِيقَة.\n"
-        f"🔄 <b>التَّكْرَار:</b> {recurrence}",
+        f"🔄 <b>التَّكْرَار:</b> {recurrence}\n"
+        f"🌍 <b>تَوْقِيتُ دَوْلَةِ:</b> {country}",
         parse_mode="HTML"
     )
 
@@ -667,7 +702,7 @@ def callbacks(call):
         registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
         completed_times = group.get("completed", []).count(user_id_str)
         if registered_times == 0:
-            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تَكُونَ مُسَجَّلاً فِي الْقُرَّاءِ أَوَّلاً!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تَ=ُونَ مُسَجَّلاً فِي الْقُرَّاءِ أَوَّلاً!", show_alert=True)
             return
         if completed_times < registered_times:
             group["completed"].append(user_id_str)
@@ -730,7 +765,8 @@ def callbacks(call):
             txt += "لَا يُوجَدُ مَجَالِسُ مُسَجَّلَةٌ حَالِيّاً."
         for i, l in enumerate(lessons, start=1):
             rec = l.get("recurrence", "مرة واحدة")
-            txt += f"{i}. {l['name']} | 📅 {l['day_or_date']} | ⏰ {l['time']} ({rec})\n"
+            cty = l.get("country", "الجزائر")
+            txt += f"{i}. {l['name']} | 📅 {l['day_or_date']} | ⏰ {l['time']} ({rec}) | 🌍 {cty}\n"
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=txt, parse_mode="HTML", reply_markup=keyboard)
@@ -807,7 +843,8 @@ def callbacks(call):
             "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30 أَوْ الْجُمُعَة)</code>\n"
             "<code>الْوَقْتُ (بِتَنْسِيقِ 24 سَاعَة مِثَال: 15:30)</code>\n"
             "<code>دَقَائِقُ التَّنْبِيهِ قَبْلَ الْمَوْعِدِ (مِثَال: 15)</code>\n"
-            "<code>التَّكْرَارُ (مرة واحدة | يوميا | أسبوعيا)</code>"
+            "<code>التَّكْرَارُ (مرة واحدة | يوميا | أسبوعيا)</code>\n"
+            "<code>الدَّوْلَةُ (مِثَال: الجزائر | السعودية)</code>"
         )
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
