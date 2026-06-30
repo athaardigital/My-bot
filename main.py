@@ -28,6 +28,13 @@ if not REDIS_URL or not REDIS_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# جلب اسم المستخدم للبوت مرة واحدة عند التشغيل لتفادي بطء الأزرار
+try:
+    BOT_USERNAME = bot.get_me().username
+except Exception as e:
+    print(f"⚠️ Error fetching bot username: {e}")
+    BOT_USERNAME = ""
+
 # =====================================
 # الِاتِّصَالُ بِقَاعِدَةِ الْبَيَانَاتِ (Upstash Redis)
 # =====================================
@@ -54,7 +61,7 @@ def get_tz_by_country(country_name):
         "الإمارات": "Asia/Dubai",
         "العراق": "Asia/Baghdad",
         "المغرب": "Africa/Casablanca",
-        "تunes": "Africa/Tunis",
+        "تونس": "Africa/Tunis",
         "الكويت": "Asia/Kuwait",
         "قطر": "Asia/Qatar",
         "فلسطين": "Asia/Gaza"
@@ -105,7 +112,6 @@ def check_reminders():
             current_date_str = now.strftime("%Y-%m-%d")
             current_time_str = now.strftime("%H:%M")
 
-            # منطق الفحص
             is_today = (recurrence == "يوميا") or \
                        (recurrence == "أسبوعيا" and day_or_date == current_day_ar) or \
                        (day_or_date == current_date_str)
@@ -118,13 +124,11 @@ def check_reminders():
                     
                     print(f"⏰ [DEBUG] Lesson {lesson['name']} at {lesson['time']}, Diff: {diff} mins.")
 
-                    # تم تعديل النطاق هنا لمنع ضياع التنبيه بسبب فترات الـ 5 دقائق لـ UptimeRobot
                     if -5 <= diff <= int(lesson.get("remind_before", 5)):
-                        trigger_key = current_date_str  # الاعتماد على التاريخ فقط لمنع التكرار في نفس اليوم
+                        trigger_key = current_date_str  
                         if lesson.get("last_triggered") != trigger_key:
                             lesson["last_triggered"] = trigger_key
                             
-                            # الإرسال
                             for sub_id in subs:
                                 try:
                                     remind_mins = max(0, int(diff))
@@ -132,7 +136,6 @@ def check_reminders():
                                 except Exception as e:
                                     print(f"❌ [DEBUG] Failed to send to {sub_id}: {e}")
                                     
-                            # الحذف التلقائي للمرة الواحدة
                             if recurrence == "مرة واحدة":
                                 print(f"🗑️ [DEBUG] Removing one-time lesson: {lesson['name']}")
                                 continue 
@@ -303,13 +306,12 @@ def main_keyboard(chat_id):
             types.InlineKeyboardButton("🗑️ حَذْفُ الِاسْمِ", callback_data="delete")
         )
         
-    try:
-        bot_username = bot.get_me().username
+    # تعديل الرابط لاستبدال علامة السالب بـ m ليتوافق مع شروط تليجرام الصارمة
+    if BOT_USERNAME:
+        safe_chat_id = str(chat_id).replace("-", "m")
         keyboard.add(
-            types.InlineKeyboardButton("🔔 تَفْعِيلُ التَّنْبِيهَاتِ (خَاص)", url=f"https://t.me/{bot_username}?start=sub_{chat_id}")
+            types.InlineKeyboardButton("🔔 تَفْعِيلُ التَّنْبِيهَاتِ (خَاص)", url=f"https://t.me/{BOT_USERNAME}?start=sub_{safe_chat_id}")
         )
-    except:
-        pass
 
     keyboard.add(
         types.InlineKeyboardButton("⚙️ إِعْدَادَاتُ الْإِشْرَافِ", callback_data="settings")
@@ -337,7 +339,7 @@ def settings_keyboard(chat_id):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton(state_button, callback_data="toggle"))
     keyboard.add(types.InlineKeyboardButton(extra_button, callback_data="toggle_extra"))
-    keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْوَارِ (التَّرْتِيبِ)", callback_data="manage_roles"))
+    keyboard.add(types.InlineKeyboardButton("🔄 تِغْيِيرُ الْأَدْآرِ (التَّرْتِيبِ)", callback_data="manage_roles"))
     keyboard.add(types.InlineKeyboardButton("📊 إِحْصَاءُ الْحِصَّةِ", callback_data="stats"))
     keyboard.add(types.InlineKeyboardButton("🔔 الْحِصَص", callback_data="manage_lessons"))
     keyboard.add(types.InlineKeyboardButton("🔄 إِرْسَالُ آخِرِ قَائِمَةٍ", callback_data="refresh"))  
@@ -407,7 +409,8 @@ def start(message):
     if message.chat.type == "private":
         args = message.text.split()
         if len(args) > 1 and args[1].startswith("sub_"):
-            target_chat_id = args[1].replace("sub_", "")
+            # إرجاع الـ m إلى علامة الناقص الأصلية ليتعرف البوت على آيدي المجموعة الفعلي
+            target_chat_id = args[1].replace("sub_", "").replace("m", "-")
             
             keyboard = types.InlineKeyboardMarkup(row_width=1)
             keyboard.add(
@@ -428,13 +431,16 @@ def start(message):
             message.chat.id,
             "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\nحَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
             "📢 <b>تَنْبِيه:</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
-            "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقضاة هُنَا.\n\n"
+            "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
             "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ."
         )
         return
 
+    # التعديل الجذري هنا: مسح وتصفير القائمة فوراً في قاعدة البيانات قبل إرسال اللوحة
     chat_id = str(message.chat.id)
     group = default_group()
+    save_group(chat_id, group)
+    redis_client.sadd("active_groups", chat_id)
 
     sent = bot.send_message(
         message.chat.id,
@@ -446,7 +452,6 @@ def start(message):
 
     group["message_id"] = sent.message_id
     save_group(chat_id, group)
-    redis_client.sadd("active_groups", chat_id)
 
 @bot.message_handler(commands=["lesson"])
 def add_lesson(message):
@@ -688,7 +693,7 @@ def callbacks(call):
         registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
         completed_times = group.get("completed", []).count(user_id_str)
         if registered_times == 0:
-            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تَ=ُونَ مُسَجَّلاً فِي الْقُرَّاءِ أَوَّلاً!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ يَجِبُ أَنْ تَكُونَ مُسَجَّلاً فِي الْقُرَّاءِ أَوَّلاً!", show_alert=True)
             return
         if completed_times < registered_times:
             group["completed"].append(user_id_str)
@@ -746,7 +751,7 @@ def callbacks(call):
     elif call.data == "view_lessons":
         lessons_data = redis_client.get(f"group:{chat_id}:lessons")
         lessons = json.loads(lessons_data) if lessons_data else []
-        txt = "🔔 <b>الْمَجَالِسُ وَالْحِصَصُ الْحَالِيَّةُ الْمُسَجَّلَةُ:</b>\n\n"
+        txt = "🔔 <b>الْمَجَالِسُ وَالْحِصَصُ الْحَالِيَّةُ الْمُسَجَّلَة...</b>\n\n"
         if not lessons:
             txt += "لَا يُوجَدُ مَجَالِسُ مُسَجَّلَةٌ حَالِيّاً."
         for i, l in enumerate(lessons, start=1):
@@ -823,7 +828,7 @@ def callbacks(call):
     elif call.data == "lessons_add_info":
         form_text = (
             "➕ <b>إِسْتِمَارَةُ جَدْوَلَةِ مَجْلِسٍ جَدِيدٍ:</b>\n\n"
-            "لِإِضَافَةِ مَجْلِسٍ، قُمْ بِنَسْخِ الِاسْتِمَارَةِ أَدْنَاهُ وَمَلْءِ بَيَانَاتِهَا ثُمَّ أَرْسِلْهَا كَرِسَالَةٍ عادِيَّةٍ دَاخِلَ الْمَجْمُوعَةِ:\n\n"
+            "لِإِضَافَةِ مَجْلِسٍ، قُمْ بِنَسْخِ الِاسْتِمَارَةِ أَدْنَاهُ وَمَلْءِ بَيَانَاتِهَا ثُمَّ أَرْسِلْهَا كَرِسَالَةٍ عَادِيَّةٍ دَاخِلَ الْمَجْمُوعَةِ:\n\n"
             "<code>/lesson</code>\n"
             "<code>اِسْمُ الْمَجْلِسِ</code>\n"
             "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30)</code>\n"
