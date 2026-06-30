@@ -118,15 +118,17 @@ def check_reminders():
                     
                     print(f"⏰ [DEBUG] Lesson {lesson['name']} at {lesson['time']}, Diff: {diff} mins.")
 
-                    if 0 <= diff <= int(lesson.get("remind_before", 5)):
-                        trigger_key = f"{current_date_str}_{current_time_str}"
+                    # تم تعديل النطاق هنا لمنع ضياع التنبيه بسبب فترات الـ 5 دقائق لـ UptimeRobot
+                    if -5 <= diff <= int(lesson.get("remind_before", 5)):
+                        trigger_key = current_date_str  # الاعتماد على التاريخ فقط لمنع التكرار في نفس اليوم
                         if lesson.get("last_triggered") != trigger_key:
                             lesson["last_triggered"] = trigger_key
                             
                             # الإرسال
                             for sub_id in subs:
                                 try:
-                                    bot.send_message(int(sub_id), f"🔔 تذكير: {lesson['name']} يبدأ بعد {int(diff)} دقيقة.")
+                                    remind_mins = max(0, int(diff))
+                                    bot.send_message(int(sub_id), f"🔔 تذكير: {lesson['name']} يبدأ بعد {remind_mins} دقيقة.")
                                 except Exception as e:
                                     print(f"❌ [DEBUG] Failed to send to {sub_id}: {e}")
                                     
@@ -824,7 +826,7 @@ def callbacks(call):
             "لِإِضَافَةِ مَجْلِسٍ، قُمْ بِنَسْخِ الِاسْتِمَارَةِ أَدْنَاهُ وَمَلْءِ بَيَانَاتِهَا ثُمَّ أَرْسِلْهَا كَرِسَالَةٍ عادِيَّةٍ دَاخِلَ الْمَجْمُوعَةِ:\n\n"
             "<code>/lesson</code>\n"
             "<code>اِسْمُ الْمَجْلِسِ</code>\n"
-            "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30 أَوْ الْجُمُعَة)</code>\n"
+            "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30)</code>\n"
             "<code>الْوَقْتُ (بِتَنْسِيقِ 24 سَاعَة مِثَال: 15:30)</code>\n"
             "<code>دَقَائِقُ التَّنْبِيهِ قَبْلَ الْمَوْعِدِ (مِثَال: 15)</code>\n"
             "<code>التَّكْرَارُ (مرة واحدة | يوميا | أسبوعيا)</code>\n"
