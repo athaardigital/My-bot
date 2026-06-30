@@ -129,10 +129,37 @@ def check_reminders():
                         if lesson.get("last_triggered") != trigger_key:
                             lesson["last_triggered"] = trigger_key
                             
+                            # جلب معلومات المجموعة ورابطها بشكل آمن عند إرسال التنبيه فقط تلافياً للبطء
+                            try:
+                                chat = bot.get_chat(int(cid_str))
+                                group_title = chat.title
+                                group_link = chat.invite_link
+                                if not group_link and chat.username:
+                                    group_link = f"https://t.me/{chat.username}"
+                                if not group_link:
+                                    try:
+                                        group_link = bot.export_chat_invite_link(int(cid_str))
+                                    except:
+                                        group_link = None
+                            except Exception as chat_err:
+                                print(f"⚠️ Error fetching chat info for {cid_str}: {chat_err}")
+                                group_title = "المجموعة"
+                                group_link = None
+
                             for sub_id in subs:
                                 try:
-                                    remind_mins = max(0, int(diff))
-                                    bot.send_message(int(sub_id), f"🔔 تذكير: {lesson['name']} يبدأ بعد {remind_mins} دقيقة.")
+                                    # إعداد منشن ورابط المجموعة إن وُجد
+                                    group_mention = f'<a href="{group_link}">{group_title}</a>' if group_link else f"<b>{group_title}</b>"
+                                    
+                                    # رسالة التذكير الاحترافية الجديدة
+                                    remind_msg = (
+                                        f"🔔 <b>تَذْكِيرٌ بِالْحِصَّةِ الْعِلْمِيَّةِ:</b>\n\n"
+                                        f"📚 <b>الْحِصَّة:</b> {lesson['name']}\n"
+                                        f"⏰ <b>الْمَوْعِد:</b> {lesson['time']}\n"
+                                        f"👥 <b>الْمَجْمُوعَة:</b> {group_mention}\n\n"
+                                        f"📢 <i>هَذَا التَّذْكِيرُ قَبْلَ الْمَوْعِدِ بِـ {lesson.get('remind_before', 5)} دَقِيقَة.</i>"
+                                    )
+                                    bot.send_message(int(sub_id), remind_msg, parse_mode="HTML", disable_web_page_preview=True)
                                 except Exception as e:
                                     print(f"❌ [DEBUG] Failed to send to {sub_id}: {e}")
                                     
@@ -306,7 +333,6 @@ def main_keyboard(chat_id):
             types.InlineKeyboardButton("🗑️ حَذْفُ الِاسْمِ", callback_data="delete")
         )
         
-    # تعديل الرابط لاستبدال علامة السالب بـ m ليتوافق مع شروط تليجرام الصارمة
     if BOT_USERNAME:
         safe_chat_id = str(chat_id).replace("-", "m")
         keyboard.add(
@@ -409,7 +435,6 @@ def start(message):
     if message.chat.type == "private":
         args = message.text.split()
         if len(args) > 1 and args[1].startswith("sub_"):
-            # إرجاع الـ m إلى علامة الناقص الأصلية ليتعرف البوت على آيدي المجموعة الفعلي
             target_chat_id = args[1].replace("sub_", "").replace("m", "-")
             
             keyboard = types.InlineKeyboardMarkup(row_width=1)
@@ -436,7 +461,6 @@ def start(message):
         )
         return
 
-    # التعديل الجذري هنا: مسح وتصفير القائمة فوراً في قاعدة البيانات قبل إرسال اللوحة
     chat_id = str(message.chat.id)
     group = default_group()
     save_group(chat_id, group)
@@ -930,7 +954,7 @@ def callbacks(call):
         for i, r in enumerate(group["readers"]):
             if i != idx:
                 keyboard.add(types.InlineKeyboardButton(f"تَبْدِيلٌ مَعَ: {i+1}. {r['name']}", callback_data=f"doswap:{idx}:{i}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 إِلْغَاءٌ", callback_data=f"edit_turn:{idx}"))
+        keyboard.add(types.InlineKeyboardButton("🔙 أَوَّلٌ", callback_data=f"edit_turn:{idx}"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"🔄 <b>اخْتَرْ دَوْراً لِتَبْدِيلِ الْمَرَاكِزِ مَعَ ({target_name}):</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
 
