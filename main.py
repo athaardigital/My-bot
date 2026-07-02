@@ -435,12 +435,12 @@ def start(message):
             return
         bot.send_message(
             message.chat.id,
-            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\nحَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
-         
-         "📢 تنبيه 
-         يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
+            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\n"
+            "حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
+            "📢 <b>تَنْبِيه:</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
             "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
-            "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ."
+            "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ.",
+            parse_mode="HTML"
         )
         return
     chat_id = str(message.chat.id)
@@ -888,46 +888,5 @@ def callbacks(call):
         idx = int(call.data.split(":")[1])
         readers = group.get("readers", [])
         if idx >= 0 and idx < len(readers) - 1:
-            readers[idx], readers[idx + 1] = readers[idx + 1], readers[idx]
-            save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَأْخِيرُ الدَّوْرِ.", show_alert=True)
-            show_manage_roles(call, chat_id, group)
-        else:
-            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي نِهَايَةِ الْقَائِمَةِ!", show_alert=True)
-    elif call.data.startswith("swap_turn:"):
-        idx = int(call.data.split(":")[1])
-        target_name = group["readers"][idx]["name"]
-        keyboard = types.InlineKeyboardMarkup(row_width=1)
-        for i, r in enumerate(group["readers"]):
-            if i != idx:
-                keyboard.add(types.InlineKeyboardButton(f"تَبْدِيلٌ مَعَ: {i+1}. {r['name']}", callback_data=f"doswap:{idx}:{i}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data=f"edit_turn:{idx}"))
-        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"🔄 <b>اخْتَرْ دَوْراً لِتَبْدِيلِ الْمَرَاكِزِ مَعَ ({target_name}):</b>", parse_mode="HTML", reply_markup=keyboard)
-        bot.answer_callback_query(call.id)
-    elif call.data.startswith("doswap:"):
-        idx1 = int(call.data.split(":")[1])
-        idx2 = int(call.data.split(":")[2])
-        readers = group.get("readers", [])
-        if idx1 < len(readers) and idx2 < len(readers):
-            readers[idx1], readers[idx2] = readers[idx2], readers[idx1]
-            save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَبْدِيلُ الْأَدْوَارِ.", show_alert=True)
-            show_manage_roles(call, chat_id, group)
+            readers[idx], readers
 
-# =====================================
-# التَّشْغِيلُ مَعَ Webhook
-# =====================================
-
-if __name__ == "__main__":
-    bot.remove_webhook()
-    time.sleep(1)
-    
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
-    if RENDER_URL:
-        bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-        print(f"Webhook securely set to {RENDER_URL}/{BOT_TOKEN}")
-    else:
-        print("⚠️ RENDER_EXTERNAL_URL NOT FOUND IN ENV.")
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
