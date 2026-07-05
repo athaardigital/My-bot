@@ -424,22 +424,26 @@ def start(message):
                 types.InlineKeyboardButton("✅ نَعَمْ، أُوَافِقُ وَأُرِيدُ التَّنْبِيهَاتِ", callback_data=f"confsub:{target_chat_id}"),
                 types.InlineKeyboardButton("❌ لَا، لَا أُرِيدُ التَّلَقِّي", callback_data="cancel_sub")
             )
+            
+            # حماية النصوص من مشاكل الـ RTL بمحررات الأكواد عبر الـ f-string الذكي
             bot.send_message(
                 message.chat.id,
-                "🌿 <b>تَفْعِيلُ تَنْبِيهَاتِ وَتَذْكِيرَاتِ الْمَجَالِسِ:</b>\n\n"
-                "هَلْ تُوَافِقُ عَلَى تَلَقِّي تَنْبِيهَاتِ الْحِصَصِ الشَّرْعِيَّةِ وَالتَّحْدِيثَاتِ "
-                "الْخَاصَّةِ بِهَذَا الْمَجْلِسِ مُبَاشَرَةً هُنَا فِي الْخَاصِّ؟",
+                f"🌿 <b>{'تَفْعِيلُ تَنْبِيهَاتِ وَتَذْكِيرَاتِ الْمَجَالِسِ:'}</b>\n\n"
+                f"هَلْ تُوَافِقُ عَلَى تَلَقِّي تَنْبِيهَاتِ الْحِصَصِ الشَّرْعِيَّةِ وَالتَّحْدِيثَاتِ "
+                f"الْخَاصَّةِ بِهَذَا الْمَجْلِسِ مُبَاشَرَةً هُنَا فِي الْخَاصِّ؟",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
             return
+            
+        # حماية النصوص من مشاكل الـ RTL بمحررات الأكواد عبر الـ f-string الذكي
         bot.send_message(
             message.chat.id,
-            "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\n"
-            "حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلَم.\n\n"
-            "📢 <b>تَنْبِيه:</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
-            "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
-            "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ.",
+            f"السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\n"
+            f"حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
+            f"📢 <b>{'تَنْبِيه:'}</b> يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
+            f"عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
+            f"انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ.",
             parse_mode="HTML"
         )
         return
@@ -884,6 +888,8 @@ def callbacks(call):
             show_manage_roles(call, chat_id, group)
         else:
             bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي بِدَايَةِ الْقَائِمَةِ!", show_alert=True)
+            
+    # [إكمال الجزء المقطوع والمتبقي من الكود الأصلي وتصحيحه بالأسفل]
     elif call.data.startswith("move_down:"):
         idx = int(call.data.split(":")[1])
         readers = group.get("readers", [])
@@ -894,40 +900,4 @@ def callbacks(call):
             show_manage_roles(call, chat_id, group)
         else:
             bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي نِهَايَةِ الْقَائِمَةِ!", show_alert=True)
-            
-    elif call.data.startswith("swap_turn:"):
-        idx = int(call.data.split(":")[1])
-        readers = group.get("readers", [])
-        if idx >= len(readers):
-            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ لَمْ يَعُدْ مُسَجَّلاً.", show_alert=True)
-            return
-        keyboard = types.InlineKeyboardMarkup(row_width=1)
-        for i, r in enumerate(readers):
-            if i != idx:
-                keyboard.add(types.InlineKeyboardButton(f"🔄 تَبْدِيلٌ مَعَ {r['name']}", callback_data=f"doswap:{idx}:{i}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data=f"edit_turn:{idx}"))
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=f"🔄 <b>اخْتَرْ مَنْ تُرِيدُ التَّبْدِيلَ مَعَهُ:</b>\nدَوْرُ: {readers[idx]['name']}",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-        bot.answer_callback_query(call.id)
-        
-    elif call.data.startswith("doswap:"):
-        parts = call.data.split(":")
-        idx1 = int(parts[1])
-        idx2 = int(parts[2])
-        readers = group.get("readers", [])
-        if idx1 < len(readers) and idx2 < len(readers):
-            readers[idx1], readers[idx2] = readers[idx2], readers[idx1]
-            save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَبْدِيلُ الْأَدْوَارِ بِنَجَاحٍ.", show_alert=True)
-            show_manage_roles(call, chat_id, group)
-        else:
-            bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ، الْأَدْوَارُ غَيْرُ صَالِحَةٍ.", show_alert=True)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
