@@ -1,7 +1,6 @@
 import os
 import time
 import json
-import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort
@@ -247,7 +246,7 @@ def is_admin(user_id, chat_id):
         return False
 
 def mention(user_id, name):
-    safe_name = html.escape(name)
+    safe_name = name.replace("<", "").replace(">", "")
     return f"<a href='tg://user?id={user_id}'>{safe_name}</a>"
 
 def make_board(chat_id):
