@@ -437,8 +437,8 @@ def start(message):
             message.chat.id,
             "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\n"
             "حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
-            "📢 تَنْبِيه:
-            يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
+            "📢 تَنْبِيه:\n"
+            "يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
             "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
             "انْشُرُوا الْبُوتَ فَضْلاً فَهُوَ صَدَقَةٌ عَنِّي وَعَنْ وَالِدَيَّ وَمَقْرَأَتِنَا وَكُلِّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ.",
             parse_mode="HTML"
@@ -889,5 +889,10 @@ def callbacks(call):
         idx = int(call.data.split(":")[1])
         readers = group.get("readers", [])
         if idx >= 0 and idx < len(readers) - 1:
-            readers[idx], readers
+            readers[idx], readers[idx + 1] = readers[idx + 1], readers[idx]
+            save_group(chat_id, group)
+            bot.answer_callback_query(call.id, "✅ تَمَّ تَأْخِيرُ الدَّوْرِ.", show_alert=True)
+            show_manage_roles(call, chat_id, group)
+        else:
+            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي نِهَايَةِ الْقَائِمَةِ!", show_alert=True)
 
