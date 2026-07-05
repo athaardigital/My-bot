@@ -83,9 +83,7 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
-    # الْتَّحَقُّقُ مِنَ الْهيدر (Header)
     if request.headers.get("X-Cron-Key") != SECRET_KEY:
-        # إِذَا كَانَ الْمِفْتَاحُ خَطَأً أَوْ غَيْرَ مَوْجُودٍ، اقْطَعِ الِاتِّصَالَ
         abort(403) 
 
     print("🔄 [DEBUG] Running reminder check...")
@@ -162,7 +160,6 @@ def check_reminders():
                                     print(f"⚠️ Error fetching chat info for {cid_str}: {chat_err}")
                                     chat_info_fetched = True
 
-                            # [التعديل هنا: دمج الرابط في اسم المجموعة + إضافة زر شفاف]
                             group_link_url = group_link if group_link else "https://t.me"
                             remind_msg = (
                                 f"🔔 <b>تَذْكِيرٌ بِالْحِصَّةِ الْعِلْمِيَّةِ:</b>\n\n"
@@ -198,7 +195,7 @@ def check_reminders():
     return "Check completed.", 200
 
 # =====================================
-# (باقي الدوال كما هي دون تغيير)
+# الدوال المساعدة للمجلس والأدوار
 # =====================================
 
 def default_group():
@@ -413,6 +410,10 @@ def show_manage_roles(call, chat_id, group):
         reply_markup=keyboard
     )
 
+# =====================================
+# رسائل الأوامر المباشرة (Handlers)
+# =====================================
+
 @bot.message_handler(commands=["start"])
 def start(message):
     if message.chat.type == "private":
@@ -426,7 +427,7 @@ def start(message):
             )
             bot.send_message(
                 message.chat.id,
-                "🌿 <b>تَفْعِيلُ تَنْبِيهَاتِ وَتَذْكِيرَاتِ الْمَجَالِسِ:</b>\n\n"
+                "🌿 <b>تَفْعِيلُ تَنْبِيهَاتِ وَتَذْكِيرَاتِ الْمَجَالِِسِ:</b>\n\n"
                 "هَلْ تُوَافِقُ عَلَى تَلَقِّي تَنْبِيهَاتِ الْحِصَصِ الشَّرْعِيَّةِ وَالتَّحْدِيثَاتِ "
                 "الْخَاصَّةِ بِهَذَا الْمَجْلِسِ مُبَاشَرَةً هُنَا فِي الْخَاصِّ؟",
                 parse_mode="HTML",
@@ -436,7 +437,7 @@ def start(message):
         bot.send_message(
             message.chat.id,
             "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ\n\n"
-            "حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلْم.\n\n"
+            "حَيَّاكُمُ اللَّهُ فِي بُوتِ مَجَالِسِ الْعِلَم.\n\n"
             "📢 تَنْبِيه:\n"
             "يُمْكِنُكَ الِاشْتِرَاكُ فِي نِظَامِ التَّذْكِيرِ لِأَيِّ مَجْلِسٍ تَنْتَمِي إِلَيْهِ "
             "عَبْرَ الضَّغْطِ عَلَى زِرِّ (تَفْعِيلُ التَّنْبِيهَاتِ) دَاخِلَ الْمَجْمُوعَةِ وَالْمُوَافَقَةِ هُنَا.\n\n"
@@ -570,6 +571,10 @@ def command_call(message):
         except Exception: 
             pass
     bot.reply_to(message, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.")
+
+# =====================================
+# معالجة ضغطات الأزرار الشفافة (Callbacks)
+# =====================================
 
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
@@ -815,84 +820,10 @@ def callbacks(call):
             "<code>اِسْمُ الْمَجْلِسِ</code>\n"
             "<code>الْيَوْمُ أَوْ التَّارِيخُ (مِثَال: 2026-06-30)</code>\n"
             "<code>الْوَقْتُ (بِتَنْسِيقِ 24 سَاعَة مِثَال: 15:30)</code>\n"
-            "<code>دَقَائِقُ التَّنْبِيهِ قَبْلَ الْمَوْعِدِ (مِثَال: 15)</code>\n"
+            "<code>دَقَائِقُ التَّنْبِهِ قَبْلَ الْمَوْعِدِ (مِثَال: 15)</code>\n"
             "<code>التَّكْرَارُ (مرة واحدة | يوميا | أسبوعيا)</code>\n"
             "<code>الدَّوْلَةُ (مِثَال: الجزائر | السعودية)</code>"
         )
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
-        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=form_text, parse_mode="HTML", reply_markup=keyboard)
-        bot.answer_callback_query(call.id)
-    elif call.data == "reset":
-        old_message = group.get("message_id")
-        group = default_group()
-        group["message_id"] = old_message
-        save_group(chat_id, group)
-        update_board(chat_id)
-        bot.answer_callback_query(call.id, "🔄 تَمَّ تَصْفِيرُ الْقَائِمَةِ تَمَاماً.", show_alert=True)
-    elif call.data == "delete_group_all":
-        redis_client.srem("active_groups", str(chat_id))
-        redis_client.delete(f"group:{chat_id}")
-        redis_client.delete(f"group:{chat_id}:lessons")
-        redis_client.delete(f"group:{chat_id}:subscribers")
-        try:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text="🗑️ <b>تَمَّ حَذْفُ هَذَا الْمَجْلِسِ كُلِّيّاً مِنَ النِّظَامِ.</b>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
-        bot.answer_callback_query(call.id, "✅ تم حذف المجلس وإلغاء التنبيهات نهائياً.", show_alert=True)
-    elif call.data == "call":
-        subs_data = redis_client.get(f"group:{chat_id}:subscribers")
-        subs = json.loads(subs_data) if subs_data else []
-        if not subs:
-            bot.answer_callback_query(call.id, "⚠️ لَا يُوجَدُ مُشْتَرِكُونَ نَشِطُونَ فِي تَنْبِيهَاتِ هَذِهِ الْمَجْمُوعَةِ حَالِيّاً.", show_alert=True)
-            return
-        for sub_id in subs:
-            try: 
-                bot.send_message(int(sub_id), "هَلُمُّوا لِمَجْلِسٍ تَحُفُّهُ الْمَلَائِكَةُ 🌿")
-            except Exception: 
-                pass
-        bot.answer_callback_query(call.id, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.", show_alert=True)
-    elif call.data == "manage_roles":
-        show_manage_roles(call, chat_id, group)
-        bot.answer_callback_query(call.id)
-    elif call.data.startswith("edit_turn:"):
-        idx = int(call.data.split(":")[1])
-        if idx >= len(group.get("readers", [])):
-            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ لَمْ يَعُدْ مُسَجَّلاً.", show_alert=True)
-            return
-        target_name = group["readers"][idx]["name"]
-        keyboard = types.InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            types.InlineKeyboardButton("تَقْدِيمٌ ⬆️", callback_data=f"move_up:{idx}"),
-            types.InlineKeyboardButton("تَأْخِيرٌ ⬇️", callback_data=f"move_down:{idx}")
-        )
-        keyboard.add(types.InlineKeyboardButton("تَبْدِيلٌ مَعَهُ 🔄", callback_data=f"swap_turn:{idx}"))
-        keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْقَائِمَة", callback_data="manage_roles"))
-        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"⚙️ <b>تَعْدِيلُ دَوْرِ رَقْم ({idx+1}):</b> {target_name}", parse_mode="HTML", reply_markup=keyboard)
-        bot.answer_callback_query(call.id)
-    elif call.data.startswith("move_up:"):
-        idx = int(call.data.split(":")[1])
-        readers = group.get("readers", [])
-        if idx > 0 and idx < len(readers):
-            readers[idx], readers[idx - 1] = readers[idx - 1], readers[idx]
-            save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَقْدِيمُ الدَّوْرِ.", show_alert=True)
-            show_manage_roles(call, chat_id, group)
-        else:
-            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي بِدَايَةِ الْقَائِمَةِ!", show_alert=True)
-    elif call.data.startswith("move_down:"):
-        idx = int(call.data.split(":")[1])
-        readers = group.get("readers", [])
-        if idx >= 0 and idx < len(readers) - 1:
-            readers[idx], readers[idx + 1] = readers[idx + 1], readers[idx]
-            save_group(chat_id, group)
-            bot.answer_callback_query(call.id, "✅ تَمَّ تَأْخِيرُ الدَّوْرِ.", show_alert=True)
-            show_manage_roles(call, chat_id, group)
-        else:
-            bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي نِهَايَةِ الْقَائِمَةِ!", show_alert=True)
+        keyboard.add
 
