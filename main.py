@@ -460,7 +460,6 @@ def start(message):
     chat_id = str(message.chat.id)
     user_id = message.from_user.id
 
-    # التحقق من الصلاحيات الإدارية الفعبّلة
     if not is_admin(user_id, chat_id):
         bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة تهيئة المجلس مخصصة لمشرفي المجموعة فقط.")
         return
@@ -468,12 +467,10 @@ def start(message):
     is_active = redis_client.sismember("active_groups", chat_id)
     group = get_group(chat_id)
 
-    # إذا كانت المجموعة مفعلة مسبقاً، لا نصفّر البيانات ولا نفقد الأسماء
     if is_active and group.get("message_id"):
         bot.reply_to(message, "ℹ️ مجلس القرآن مفعل بالفعل في هذه المجموعة. يمكنك استخدام القائمة الحالية أو إرسال آخر قائمة من إعدادات الإشراف.")
         return
 
-    # تفعيل مجموعة جديدة لأول مرة
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
@@ -998,6 +995,7 @@ def callbacks(call):
             show_manage_roles(call, chat_id, group)
         else:
             bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ أَثْنَاءَ التَّبْدِيلِ.", show_alert=True)
- if __name__ == "__main__":
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
