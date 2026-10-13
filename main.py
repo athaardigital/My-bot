@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort
@@ -21,6 +22,7 @@ load_dotenv()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
 REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+SECRET_KEY = os.environ.get("CRON_SECRET_KEY")
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ TELEGRAM_BOT_TOKEN NOT FOUND IN ENV")
@@ -46,7 +48,6 @@ redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 # =====================================
 
 app = Flask(__name__)
-SECRET_KEY = os.environ.get("CRON_SECRET_KEY")
 
 def get_arabic_day_name(weekday_idx):
     days = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
@@ -82,7 +83,7 @@ def receive_update():
 
 @app.route("/check_reminders", methods=["GET", "POST"])
 def check_reminders():
-    if request.headers.get("X-Cron-Key") != SECRET_KEY:
+    if not SECRET_KEY or request.headers.get("X-Cron-Key") != SECRET_KEY:
         abort(403) 
 
     print("🔄 [DEBUG] Running reminder check...")
@@ -105,21 +106,25 @@ def check_reminders():
         subs_data = redis_client.get(f"group:{cid_str}:subscribers")
         subs = json.loads(subs_data) if subs_data else []
         
-        print(f"🔍 [DEBUG] Checking group {cid_str}, Found {len(lessons)} lessons.")
-
         updated_lessons = []
         group_title = "المجموعة"
         group_link = None
         chat_info_fetched = False
+        lessons_changed = False
 
         for lesson in lessons:
             recurrence = lesson.get("recurrence", "مرة واحدة").strip()
             day_or_date = lesson.get("day_or_date", "").strip()
             country = lesson.get("country", "الجزائر").strip()
 
-            tz_name = get_tz_by_country(country)
-            tz_info = ZoneInfo(tz_name)
-            now = datetime.now(tz_info)
+            try:
+                tz_name = get_tz_by_country(country)
+                tz_info = ZoneInfo(tz_name)
+                now = datetime.now(tz_info)
+            except Exception as tz_err:
+                print(f"⚠️ TZ Error for {country}: {tz_err}")
+                updated_lessons.append(lesson)
+                continue
             
             current_day_ar = get_arabic_day_name(now.weekday())
             current_date_str = now.strftime("%Y-%m-%d")
@@ -134,17 +139,18 @@ def check_reminders():
                     lesson_dt = datetime.combine(now.date(), l_time_obj).replace(tzinfo=tz_info)
                     
                     diff = (lesson_dt - now).total_seconds() / 60
-                    print(f"⏰ [DEBUG] Lesson {lesson['name']} at {lesson['time']}, Diff: {diff:.2f} mins.")
+                    remind_mins = int(lesson.get("remind_before", 5))
 
-                    if -5 <= diff <= int(lesson.get("remind_before", 5)):
+                    if -5 <= diff <= remind_mins:
                         trigger_key = current_date_str  
                         if lesson.get("last_triggered") != trigger_key:
                             lesson["last_triggered"] = trigger_key
+                            lessons_changed = True
                             
                             if not chat_info_fetched:
                                 try:
                                     chat = bot.get_chat(int(cid_str))
-                                    group_title = chat.title
+                                    group_title = html.escape(chat.title or "المجموعة")
                                     group_link = chat.invite_link
                                     if not group_link and chat.username:
                                         group_link = f"https://t.me/{chat.username}"
@@ -165,7 +171,7 @@ def check_reminders():
                                 f"📚 <b>الْحِصَّة:</b> {lesson['name']}\n"
                                 f"⏰ <b>الْمَوْعِد:</b> {lesson['time']}\n"
                                 f"👥 <b>الْمَجْمُوعَة:</b> <a href='{group_link_url}'>{group_title}</a>\n\n"
-                                f"📢 <i>هَذَا التَّذْكِيرُ قَبْلَ الْمَوْعِدِ بِـ {lesson.get('remind_before', 5)} دَقِيقَة.</i>"
+                                f"📢 <i>هَذَا التَّذْكِيرُ قَبْلَ الْمَوْعِدِ بِـ {remind_mins} دَقِيقَة.</i>"
                             )
                             
                             markup = types.InlineKeyboardMarkup()
@@ -175,26 +181,25 @@ def check_reminders():
                                 try:
                                     bot.send_message(int(sub_id), remind_msg, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
                                 except ApiTelegramException as e:
-                                    print(f"❌ [DEBUG] Telegram API Error sending to {sub_id}: {e.description}")
+                                    print(f"❌ Telegram API Error sending to {sub_id}: {e.description}")
                                 except Exception as e:
-                                    print(f"❌ [DEBUG] Unknown error sending to {sub_id}: {e}")
+                                    print(f"❌ Unknown error sending to {sub_id}: {e}")
                                     
                             if recurrence == "مرة واحدة":
-                                print(f"🗑️ [DEBUG] Removing one-time lesson: {lesson['name']}")
+                                print(f"🗑️ Removing completed one-time lesson: {lesson['name']}")
                                 continue 
-                except ValueError as e:
-                    print(f"⚠️ [DEBUG] Time parsing error for lesson {lesson['name']}: {e}")
                 except Exception as e:
-                    print(f"⚠️ [DEBUG] General error in lesson calculation: {e}")
+                    print(f"⚠️ Error processing lesson {lesson.get('name')}: {e}")
             
             updated_lessons.append(lesson)
         
-        redis_client.set(f"group:{cid_str}:lessons", json.dumps(updated_lessons))
+        if lessons_changed or len(updated_lessons) != len(lessons):
+            redis_client.set(f"group:{cid_str}:lessons", json.dumps(updated_lessons))
 
     return "Check completed.", 200
 
 # =====================================
-# (باقي الدوال)
+# دوال إدارة البيانات والمجلس
 # =====================================
 
 def default_group():
@@ -225,6 +230,8 @@ def get_group(chat_id):
         group["allow_extra_turns"] = False
     if "completed" not in group:
         group["completed"] = []
+    if "list_open" not in group:
+        group["list_open"] = True
         
     return group
 
@@ -232,11 +239,10 @@ def save_group(chat_id, group):
     redis_client.set(f"group:{str(chat_id)}", json.dumps(group))
 
 def is_admin(user_id, chat_id):
-    if str(user_id) == "1087968824":
-        return True
     try:
         member = bot.get_chat_member(int(chat_id), int(user_id))
-        if member.status in ["administrator", "creator", "owner"]:
+        status = getattr(member, "status", None)
+        if status in ["administrator", "creator", "owner"]:
             return True
         if type(member).__name__ in ["ChatMemberOwner", "ChatMemberAdministrator"]:
             return True
@@ -246,7 +252,7 @@ def is_admin(user_id, chat_id):
         return False
 
 def mention(user_id, name):
-    safe_name = name.replace("<", "").replace(">", "")
+    safe_name = html.escape(str(name))
     return f"<a href='tg://user?id={user_id}'>{safe_name}</a>"
 
 def make_board(chat_id):
@@ -262,7 +268,7 @@ def make_board(chat_id):
     except Exception:
         today_str = f"{greg_date} م"
 
-    state = "🟢 مَفْتُوحَة" if group.get("list_open", False) else "🔴 مُغْلَقَة"
+    state = "🟢 مَفْتُوحَة" if group.get("list_open", True) else "🔴 مُغْلَقَة"
     extra_state = "🟢 مَسْمُوحَة" if group.get("allow_extra_turns", False) else "🔴 مَمْنُوعَة"
 
     text = (
@@ -280,14 +286,14 @@ def make_board(chat_id):
         text += "لَا يُوجَدُ حَالِيّاً.\n"
     else:
         user_counts = {}
-        for i, member in enumerate(group["readers"], start=1):
-            uid = str(member["id"])
+        for i, member_item in enumerate(group["readers"], start=1):
+            uid = str(member_item["id"])
             user_counts[uid] = user_counts.get(uid, 0) + 1
             completed_times = group.get("completed", []).count(uid)
             
             done = " ✅" if user_counts[uid] <= completed_times else ""
-            extra_badge = " <b>(إِضَافِيّ)</b>" if member.get("is_extra") else ""
-            text += f"{i}. {mention(member['id'], member['name'])}{extra_badge}{done}\n"
+            extra_badge = " <b>(إِضَافِيّ)</b>" if member_item.get("is_extra") else ""
+            text += f"{i}. {mention(member_item['id'], member_item['name'])}{extra_badge}{done}\n"
 
     text += "\n"
     text += "━━━━━━━━━━━━━━━\n"
@@ -296,8 +302,8 @@ def make_board(chat_id):
     if not group.get("listeners"):
         text += "لَا يُوجَدُ حَالِيّاً.\n"
     else:
-        for i, member in enumerate(group["listeners"], start=1):
-            text += f"{i}. {mention(member['id'], member['name'])}\n"
+        for i, member_item in enumerate(group["listeners"], start=1):
+            text += f"{i}. {mention(member_item['id'], member_item['name'])}\n"
 
     text += "\n"
     text += "━━━━━━━━━━━━━━━\n"
@@ -306,8 +312,8 @@ def make_board(chat_id):
     if not group.get("excused"):
         text += "لَا يُوجَدُ حَالِيّاً.\n"
     else:
-        for i, member in enumerate(group["excused"], start=1):
-            text += f"{i}. {mention(member['id'], member['name'])}\n"
+        for i, member_item in enumerate(group["excused"], start=1):
+            text += f"{i}. {mention(member_item['id'], member_item['name'])}\n"
 
     text += "\n━━━━━━━━━━━━━━━\n"
     text += f"🔒 <b>حَالَةُ الْقَائِمَةِ:</b> {state}\n"
@@ -353,7 +359,7 @@ def register_keyboard(chat_id):
 
 def settings_keyboard(chat_id):
     group = get_group(chat_id)
-    state_button = "🔒 إِغْلَاقُ الْقَائِمَةِ" if group.get("list_open", False) else "🔓 فَتْحُ الْقَائِمَةِ"
+    state_button = "🔒 إِغْلَاقُ الْقَائِمَةِ" if group.get("list_open", True) else "🔓 فَتْحُ الْقَائِمَةِ"
     extra_button = "🔒 مَنْعُ الْأَدْوَارِ الْإِضَافِيَّةِ" if group.get("allow_extra_turns", False) else "🔓 السَّمَاحُ بِالْأَدْوَارِ الْإِضَافِيَّةِ"
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton(state_button, callback_data="toggle"))
@@ -409,12 +415,22 @@ def show_manage_roles(call, chat_id, group):
         reply_markup=keyboard
     )
 
+# =====================================
+# معالجات الأوامر (Handlers)
+# =====================================
+
 @bot.message_handler(commands=["start"])
 def start(message):
     if message.chat.type == "private":
         args = message.text.split()
         if len(args) > 1 and args[1].startswith("sub_"):
             target_chat_id = args[1].replace("sub_", "").replace("m", "-")
+            subs_data = redis_client.get(f"group:{target_chat_id}:subscribers")
+            subs = json.loads(subs_data) if subs_data else []
+            if str(message.chat.id) not in subs:
+                subs.append(str(message.chat.id))
+                redis_client.set(f"group:{target_chat_id}:subscribers", json.dumps(subs))
+                redis_client.sadd("active_groups", target_chat_id)
             keyboard = types.InlineKeyboardMarkup(row_width=1)
             keyboard.add(
                 types.InlineKeyboardButton("✅ نَعَمْ، أُوَافِقُ وَأُرِيدُ التَّنْبِيهَاتِ", callback_data=f"confsub:{target_chat_id}"),
@@ -442,9 +458,22 @@ def start(message):
         return
 
     chat_id = str(message.chat.id)
-    group = default_group()
-    save_group(chat_id, group)
-    redis_client.sadd("active_groups", chat_id)
+    user_id = message.from_user.id
+
+    # التحقق من الصلاحيات الإدارية الفعبّلة
+    if not is_admin(user_id, chat_id):
+        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة تهيئة المجلس مخصصة لمشرفي المجموعة فقط.")
+        return
+
+    is_active = redis_client.sismember("active_groups", chat_id)
+    group = get_group(chat_id)
+
+    # إذا كانت المجموعة مفعلة مسبقاً، لا نصفّر البيانات ولا نفقد الأسماء
+    if is_active and group.get("message_id"):
+        bot.reply_to(message, "ℹ️ مجلس القرآن مفعل بالفعل في هذه المجموعة. يمكنك استخدام القائمة الحالية أو إرسال آخر قائمة من إعدادات الإشراف.")
+        return
+
+    # تفعيل مجموعة جديدة لأول مرة
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
@@ -454,6 +483,7 @@ def start(message):
     )
     group["message_id"] = sent.message_id
     save_group(chat_id, group)
+    redis_client.sadd("active_groups", chat_id)
 
 @bot.message_handler(commands=["lesson"])
 def add_lesson(message):
@@ -473,13 +503,13 @@ def add_lesson(message):
             parts = lines[1:]
         else:
             parts = lines
-    if not parts:
+    if not parts or len(parts) < 4:
         bot.send_message(
             message.chat.id,
             "ℹ️ <b>طَرِيقَةُ إِضَافَةِ حِصَّةٍ شَرْعِيَّةٍ (سَطْراً بِسَطْراً):</b>\n\n"
             "<code>/lesson</code>\n"
             "<code>اسم الحصة</code>\n"
-            "<code>اليوم أو التاريخ (مثال: 2026-06-30)</code>\n"
+            "<code>اليوم أو التاريخ (مثال: 2026-06-30 أو الإثنين)</code>\n"
             "<code>الوقت (مثال: 15:00)</code>\n"
             "<code>دقائق التذكير (مثال: 15)</code>\n"
             "<code>التكرار (مرة واحدة | يوميا | أسبوعيا)</code>\n"
@@ -487,46 +517,62 @@ def add_lesson(message):
             parse_mode="HTML"
         )
         return
-    if len(parts) < 4:
-        bot.send_message(message.chat.id, "⚠️ عُذْراً، يَجِبُ مَلْءُ 4 حُقُولٍ عَلَى الْأَقَلِّ (الِاسْمُ، التَّارِيخُ، الْوَقْتُ، التَّذْكِيرُ).")
-        return
-    name = parts[0]
-    raw_date = parts[1]
-    l_time = parts[2].replace(" ", "")
-    remind_before = parts[3].replace(" ", "")
+
+    name = html.escape(parts[0])
+    raw_date = parts[1].strip()
+    l_time = parts[2].replace(" ", "").strip()
+    remind_before_str = parts[3].replace(" ", "").strip()
     recurrence = parts[4].strip() if len(parts) > 4 else "مرة واحدة"
     country = parts[5].strip() if len(parts) > 5 else "الجزائر"
+
+    try:
+        datetime.strptime(l_time, "%H:%M")
+    except Exception:
+        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 15:00")
+        return
+
+    try:
+        remind_before = int(remind_before_str)
+        if remind_before < 0:
+            raise ValueError()
+    except Exception:
+        bot.send_message(message.chat.id, "⚠️ دقائق التذكير يجب أن تكون رقماً صحيحاً موجباً.")
+        return
+
     if "يوم" in recurrence:
         recurrence = "يوميا"
     elif "أسبوع" in recurrence or "اسبوع" in recurrence:
         recurrence = "أسبوعيا"
     else:
         recurrence = "مرة واحدة"
+
     day_or_date = raw_date
-    for sep in ["-", "/"]:
-        if sep in raw_date:
-            date_parts = [dp.strip() for dp in raw_date.split(sep) if dp.strip()]
-            if len(date_parts) == 3:
-                try:
-                    y = date_parts[0]
-                    m = date_parts[1].zfill(2)
-                    d = date_parts[2].zfill(2)
-                    if len(y) == 4:
-                        day_or_date = f"{y}-{m}-{d}"
-                    elif len(d) == 4:
-                        day_or_date = f"{d}-{m}-{y}"
-                except Exception:
-                    pass
-    try:
-        datetime.strptime(l_time, "%H:%M")
-    except Exception:
-        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 15:00")
-        return
+    if recurrence == "مرة واحدة" and ("-" in raw_date or "/" in raw_date):
+        for sep in ["-", "/"]:
+            if sep in raw_date:
+                date_parts = [dp.strip() for dp in raw_date.split(sep) if dp.strip()]
+                if len(date_parts) == 3:
+                    try:
+                        y = date_parts[0]
+                        m = date_parts[1].zfill(2)
+                        d = date_parts[2].zfill(2)
+                        if len(y) == 4:
+                            day_or_date = f"{y}-{m}-{d}"
+                        elif len(d) == 4:
+                            day_or_date = f"{d}-{m}-{y}"
+                    except Exception:
+                        pass
+        try:
+            datetime.strptime(day_or_date, "%Y-%m-%d")
+        except Exception:
+            bot.send_message(message.chat.id, "⚠️ تنسيق التاريخ غير صالح! استخدم YYYY-MM-DD.")
+            return
+
     new_lesson = {
         "name": name,
         "day_or_date": day_or_date,
         "time": l_time,
-        "remind_before": remind_before,
+        "remind_before": str(remind_before),
         "recurrence": recurrence,
         "country": country,
         "last_triggered": ""
@@ -568,6 +614,10 @@ def command_call(message):
             pass
     bot.reply_to(message, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.")
 
+# =====================================
+# معالجات الأزرار (Callbacks)
+# =====================================
+
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
     if call.data.startswith("confsub:"):
@@ -590,6 +640,7 @@ def callbacks(call):
             pass
         bot.answer_callback_query(call.id)
         return
+
     if call.data == "cancel_sub":
         try:
             bot.edit_message_text(
@@ -611,6 +662,7 @@ def callbacks(call):
         full_name += f" {user.last_name}"
     member = {"id": str(user.id), "name": full_name}
     user_id_str = str(user.id)
+
     admin_callbacks = [
         "settings", "toggle", "toggle_extra", "manage_roles", "stats", "refresh", 
         "reset", "call", "view_lessons", "delete_group_all", "manage_lessons", 
@@ -626,12 +678,14 @@ def callbacks(call):
         bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=register_keyboard(chat_id))
         bot.answer_callback_query(call.id)
         return
+
     elif call.data == "back_to_main":
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=make_board(chat_id), parse_mode="HTML", disable_web_page_preview=True, reply_markup=main_keyboard(chat_id))
         bot.answer_callback_query(call.id)
         return
+
     elif call.data == "role_reader":
-        if not group.get("list_open", False):
+        if not group.get("list_open", True):
             bot.answer_callback_query(call.id, "❌ الْقَائِمَةُ مُغْلَقَةٌ حَالِيّاً! لَا يُمْكِنُ التَّسْجِيلُ.", show_alert=True)
             return
         registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
@@ -649,6 +703,7 @@ def callbacks(call):
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "✅ تَمَّ تَسْجِيلُكَ كَقَارِئٍ.", show_alert=True)
+
     elif call.data == "role_extra":
         if not group.get("allow_extra_turns", False):
             bot.answer_callback_query(call.id, "❌ الْأَدْوَارُ الْإِضَافِيَّةُ مُغْلَقَةٌ حَالِيّاً!", show_alert=True)
@@ -666,23 +721,27 @@ def callbacks(call):
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "✅ تَمَّ تَسْجِيلُ دَوْرٍ إِضَافِيٍّ لَكَ.", show_alert=True)
+
     elif call.data == "role_listener":
         remove_member(group, user.id)
         group["listeners"].append(member)
         save_group(chat_id, group)
         update_board(chat_id)
-        bot.answer_callback_query(call.id, "🎧 تَمَّ تَسْجِيلُكَ كَمُسْتَمِعٍ.")
+        bot.answer_callback_query(call.id, "🎧 تَمَّ تَسْجِيلُكَ كَمُسْتَمِعٍ.", show_alert=True)
+
     elif call.data == "role_excused":
         remove_member(group, user.id)
         group["excused"].append(member)
         save_group(chat_id, group)
         update_board(chat_id)
-        bot.answer_callback_query(call.id, "🌿 تَمَّ تَسْجِيلُ اعْتِذَارِكَ.")
+        bot.answer_callback_query(call.id, "🌿 تَمَّ تَسْجِيلُ اعْتِذَارِكَ.", show_alert=True)
+
     elif call.data == "delete":
         remove_member(group, user.id)
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "🗑️ تَمَّ حَذْفُ اسْمِكَ.", show_alert=True)
+
     elif call.data == "done":
         registered_times = len([x for x in group.get("readers", []) if str(x["id"]) == user_id_str])
         completed_times = group.get("completed", []).count(user_id_str)
@@ -696,26 +755,33 @@ def callbacks(call):
             bot.answer_callback_query(call.id, "✅ هَنِيئاً لَكَ إِتْمَامُ الْقِرَاءَةِ!", show_alert=True)
         else:
             bot.answer_callback_query(call.id, "ℹ️ لَقَدْ أَكَّدْتَ الْقِرَاءَةَ لِجَمِيعِ أَدْوَارِكَ مُسْبَقاً.", show_alert=True)
+
     elif call.data == "settings":
         bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=settings_keyboard(chat_id))
         bot.answer_callback_query(call.id)
+
     elif call.data == "toggle":
-        group["list_open"] = not group.get("list_open", False)
+        group["list_open"] = not group.get("list_open", True)
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْقَائِمَةِ.")
+
     elif call.data == "toggle_extra":
         group["allow_extra_turns"] = not group.get("allow_extra_turns", False)
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَعْدِيلُ حَالَةِ الْأَدْوَارِ الْإِضَافِيَّةِ.")
+
     elif call.data == "refresh":
-        try: bot.delete_message(chat_id, call.message.message_id)
-        except Exception: pass
+        try: 
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception: 
+            pass
         sent = bot.send_message(chat_id, make_board(chat_id), parse_mode="HTML", reply_markup=main_keyboard(chat_id))
         group["message_id"] = sent.message_id
         save_group(chat_id, group)
         bot.answer_callback_query(call.id, "🔄 تَمَّ إِرْسَالُ آخِرِ قَائِمَةٍ.", show_alert=True)
+
     elif call.data == "stats":
         readers = group.get("readers", [])
         stats_text = "📊 <b>إِحْصَائِيَّاتُ الْمَجْلِسِ النِّهَائِيَّةِ</b> 📊\n\n"
@@ -725,6 +791,7 @@ def callbacks(call):
             stats_text += f"{i}. {m['name']}{extra_badge} {status}\n"
         bot.send_message(chat_id, stats_text, parse_mode="HTML")
         bot.answer_callback_query(call.id)
+
     elif call.data == "manage_lessons":
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         keyboard.add(
@@ -735,6 +802,7 @@ def callbacks(call):
         )
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data == "view_lessons":
         lessons_data = redis_client.get(f"group:{chat_id}:lessons")
         lessons = json.loads(lessons_data) if lessons_data else []
@@ -749,6 +817,7 @@ def callbacks(call):
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=txt, parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data == "lessons_delete_menu":
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         keyboard.add(
@@ -758,6 +827,7 @@ def callbacks(call):
         )
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🗑️ <b>اخْتَرْ خِيَارَ الْحَذْفِ الْمَطْلُوبِ:</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data == "delete_specific_lesson_menu":
         lessons_data = redis_client.get(f"group:{chat_id}:lessons")
         lessons = json.loads(lessons_data) if lessons_data else []
@@ -770,6 +840,7 @@ def callbacks(call):
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="lessons_delete_menu"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ <b>اخْتَرْ الْمَجْلِسَ الَّذِي تُرِيدُ حَذْفَهُ مِنَ الْقَائِمَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data.startswith("del_lesson:"):
         idx = int(call.data.split(":")[1])
         lessons_data = redis_client.get(f"group:{chat_id}:lessons")
@@ -796,6 +867,7 @@ def callbacks(call):
                 bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
         else:
             bot.answer_callback_query(call.id, "⚠️ هَذَا الْمَجْلِسُ لَمْ يَعُدْ مَوْجُوداً.", show_alert=True)
+
     elif call.data == "delete_all_lessons":
         redis_client.set(f"group:{chat_id}:lessons", json.dumps([]))
         bot.answer_callback_query(call.id, "🔥 تَمَّ حَذْفُ جَمِيعِ الْمَجَالِسِ وَالْحِصَصِ نِهَائِيّاً.", show_alert=True)
@@ -807,6 +879,7 @@ def callbacks(call):
             types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْإِعْدَادَاتِ", callback_data="settings")
         )
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🔔 <b>إِدَارَةُ مَجَالِسِ وَحِصَصِ الْمَجْمُوعَةِ:</b>", parse_mode="HTML", reply_markup=keyboard)
+
     elif call.data == "lessons_add_info":
         form_text = (
             "➕ <b>اِسْتِمَارَةُ جَدْوَلَةِ مَجْلِسٍ جَدِيدٍ:</b>\n\n"
@@ -823,6 +896,7 @@ def callbacks(call):
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ", callback_data="manage_lessons"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=form_text, parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data == "reset":
         old_message = group.get("message_id")
         group = default_group()
@@ -830,6 +904,7 @@ def callbacks(call):
         save_group(chat_id, group)
         update_board(chat_id)
         bot.answer_callback_query(call.id, "🔄 تَمَّ تَصْفِيرُ الْقَائِمَةِ تَمَاماً.", show_alert=True)
+
     elif call.data == "delete_group_all":
         redis_client.srem("active_groups", str(chat_id))
         redis_client.delete(f"group:{chat_id}")
@@ -845,6 +920,7 @@ def callbacks(call):
         except Exception:
             pass
         bot.answer_callback_query(call.id, "✅ تم حذف المجلس وإلغاء التنبيهات نهائياً.", show_alert=True)
+
     elif call.data == "call":
         subs_data = redis_client.get(f"group:{chat_id}:subscribers")
         subs = json.loads(subs_data) if subs_data else []
@@ -857,9 +933,11 @@ def callbacks(call):
             except Exception: 
                 pass
         bot.answer_callback_query(call.id, "📢 تَمَّ إِرْسَالُ النِّدَاءِ لِجَمِيعِ الْمُشْتَرِكِينَ النَّشِطِينَ فِي هَذِهِ الْمَجْمُوعَةِ.", show_alert=True)
+
     elif call.data == "manage_roles":
         show_manage_roles(call, chat_id, group)
         bot.answer_callback_query(call.id)
+
     elif call.data.startswith("edit_turn:"):
         idx = int(call.data.split(":")[1])
         if idx >= len(group.get("readers", [])):
@@ -875,6 +953,7 @@ def callbacks(call):
         keyboard.add(types.InlineKeyboardButton("🔙 عَوْدَةٌ لِلْقَائِمَة", callback_data="manage_roles"))
         bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"⚙️ <b>تَعْدِيلُ دَوْرِ رَقْم ({idx+1}):</b> {target_name}", parse_mode="HTML", reply_markup=keyboard)
         bot.answer_callback_query(call.id)
+
     elif call.data.startswith("move_up:"):
         idx = int(call.data.split(":")[1])
         readers = group.get("readers", [])
@@ -886,8 +965,6 @@ def callbacks(call):
         else:
             bot.answer_callback_query(call.id, "⚠️ الدَّوْرُ فِي بِدَايَةِ الْقَائِمَةِ!", show_alert=True)
 
-    # =============== (الأكواد المصححة والمكملة بالأسفل) ===============
-    
     elif call.data.startswith("move_down:"):
         idx = int(call.data.split(":")[1])
         readers = group.get("readers", [])
@@ -922,7 +999,5 @@ def callbacks(call):
         else:
             bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ أَثْنَاءَ التَّبْدِيلِ.", show_alert=True)
 
-if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
