@@ -462,12 +462,19 @@ def start(message):
 
     # التحقق من الصلاحيات الإدارية (خاص بالمشرفين والمالك فقط)
     if not is_admin(user_id, chat_id):
-        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإرسال قائمة المجلس مخصص لمشرفي المجموعة فقط.")
+        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة فتح القائمة مخصص لمشرفي المجموعة فقط.")
         return
 
     group = get_group(chat_id)
 
-    # إرسال قائمة جديدة دائماً عند تنفيذ /start بواسطة المشرف وتحديث message_id
+    # تصفير أسماء القائمة وإعادة فتحها للمجلس الجديد دون مسح الحصص أو المشتركين
+    group["readers"] = []
+    group["listeners"] = []
+    group["excused"] = []
+    group["completed"] = []
+    group["list_open"] = True
+
+    # إرسال القائمة الجديدة الخالية للمجلس الجديد وتحديث معرّف الرسالة
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
