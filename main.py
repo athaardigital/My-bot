@@ -998,6 +998,6 @@ def callbacks(call):
             show_manage_roles(call, chat_id, group)
         else:
             bot.answer_callback_query(call.id, "⚠️ حَدَثَ خَطَأٌ أَثْنَاءَ التَّبْدِيلِ.", show_alert=True)
-
+ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
