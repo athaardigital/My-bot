@@ -460,17 +460,14 @@ def start(message):
     chat_id = str(message.chat.id)
     user_id = message.from_user.id
 
+    # التحقق من الصلاحيات الإدارية (خاص بالمشرفين والمالك فقط)
     if not is_admin(user_id, chat_id):
-        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة تهيئة المجلس مخصصة لمشرفي المجموعة فقط.")
+        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإرسال قائمة المجلس مخصص لمشرفي المجموعة فقط.")
         return
 
-    is_active = redis_client.sismember("active_groups", chat_id)
     group = get_group(chat_id)
 
-    if is_active and group.get("message_id"):
-        bot.reply_to(message, "ℹ️ مجلس القرآن مفعل بالفعل في هذه المجموعة. يمكنك استخدام القائمة الحالية أو إرسال آخر قائمة من إعدادات الإشراف.")
-        return
-
+    # إرسال قائمة جديدة دائماً عند تنفيذ /start بواسطة المشرف وتحديث message_id
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
