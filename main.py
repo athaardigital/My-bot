@@ -205,6 +205,7 @@ def check_reminders():
 def default_group():
     return {
         "message_id": None,
+        "thread_id": None,
         "list_open": True,  
         "allow_extra_turns": False,
         "readers": [],      
@@ -232,6 +233,8 @@ def get_group(chat_id):
         group["completed"] = []
     if "list_open" not in group:
         group["list_open"] = True
+    if "thread_id" not in group:
+        group["thread_id"] = None
         
     return group
 
@@ -460,27 +463,29 @@ def start(message):
     chat_id = str(message.chat.id)
     user_id = message.from_user.id
 
-    # التحقق من الصلاحيات الإدارية (خاص بالمشرفين والمالك فقط)
+    # التحقق من الصلاحيات الإدارية (يشمل المشرفين والمالك/المنشئ)
     if not is_admin(user_id, chat_id):
-        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة فتح القائمة مخصص لمشرفي المجموعة فقط.")
+        bot.reply_to(message, "❌ عُذْراً! تفعيل البوت وإعادة فتح القائمة مخصص لمشرفي ومالك المجموعة فقط.")
         return
 
     group = get_group(chat_id)
 
-    # تصفير أسماء القائمة وإعادة فتحها للمجلس الجديد دون مسح الحصص أو المشتركين
+    # تصفير أسماء القائمة وإعادة فتحها للمجلس الجديد
     group["readers"] = []
     group["listeners"] = []
     group["excused"] = []
     group["completed"] = []
     group["list_open"] = True
+    group["thread_id"] = message.message_thread_id if message.is_topic_message else None
 
-    # إرسال القائمة الجديدة الخالية للمجلس الجديد وتحديث معرّف الرسالة
+    # إرسال القائمة الجديدة متوافقة مع الموضوع الفرعي (Topic) إن وجد
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=main_keyboard(message.chat.id)
+        reply_markup=main_keyboard(message.chat.id),
+        message_thread_id=group["thread_id"]
     )
     group["message_id"] = sent.message_id
     save_group(chat_id, group)
@@ -515,7 +520,8 @@ def add_lesson(message):
             "<code>دقائق التذكير (مثال: 15)</code>\n"
             "<code>التكرار (مرة واحدة | يوميا | أسبوعيا)</code>\n"
             "<code>الدولة لضبط التوقيت (مثال: الجزائر | السعودية)</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            message_thread_id=message.message_thread_id if message.is_topic_message else None
         )
         return
 
@@ -529,7 +535,7 @@ def add_lesson(message):
     try:
         datetime.strptime(l_time, "%H:%M")
     except Exception:
-        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 15:00")
+        bot.send_message(message.chat.id, "⚠️ خَطَأٌ فِي تَنْسِيقِ الْوَقْتِ! يَجِبُ أَنْ يَكُونَ مِثْلَ: 15:00", message_thread_id=message.message_thread_id if message.is_topic_message else None)
         return
 
     try:
@@ -537,7 +543,7 @@ def add_lesson(message):
         if remind_before < 0:
             raise ValueError()
     except Exception:
-        bot.send_message(message.chat.id, "⚠️ دقائق التذكير يجب أن تكون رقماً صحيحاً موجباً.")
+        bot.send_message(message.chat.id, "⚠️ دقائق التذكير يجب أن تكون رقماً صحيحاً موجباً.", message_thread_id=message.message_thread_id if message.is_topic_message else None)
         return
 
     if "يوم" in recurrence:
@@ -566,7 +572,7 @@ def add_lesson(message):
         try:
             datetime.strptime(day_or_date, "%Y-%m-%d")
         except Exception:
-            bot.send_message(message.chat.id, "⚠️ تنسيق التاريخ غير صالح! استخدم YYYY-MM-DD.")
+            bot.send_message(message.chat.id, "⚠️ تنسيق التاريخ غير صالح! استخدم YYYY-MM-DD.", message_thread_id=message.message_thread_id if message.is_topic_message else None)
             return
 
     new_lesson = {
@@ -591,7 +597,8 @@ def add_lesson(message):
         f"🔔 <b>التَّذْكِير:</b> قَبْلَهَا بِـ {remind_before} دَقِيقَة.\n"
         f"🔄 <b>التَّكْرَار:</b> {recurrence}\n"
         f"🌍 <b>تَوْقِيتُ دَوْلَةِ:</b> {country}",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        message_thread_id=message.message_thread_id if message.is_topic_message else None
     )
 
 @bot.message_handler(commands=["call"])
@@ -778,7 +785,13 @@ def callbacks(call):
             bot.delete_message(chat_id, call.message.message_id)
         except Exception: 
             pass
-        sent = bot.send_message(chat_id, make_board(chat_id), parse_mode="HTML", reply_markup=main_keyboard(chat_id))
+        sent = bot.send_message(
+            chat_id, 
+            make_board(chat_id), 
+            parse_mode="HTML", 
+            reply_markup=main_keyboard(chat_id),
+            message_thread_id=group.get("thread_id")
+        )
         group["message_id"] = sent.message_id
         save_group(chat_id, group)
         bot.answer_callback_query(call.id, "🔄 تَمَّ إِرْسَالُ آخِرِ قَائِمَةٍ.", show_alert=True)
@@ -790,7 +803,12 @@ def callbacks(call):
             status = "✅" if group.get("completed", []).count(str(m["id"])) > 0 else "❌"
             extra_badge = " (إِضَافِيّ)" if m.get("is_extra") else ""
             stats_text += f"{i}. {m['name']}{extra_badge} {status}\n"
-        bot.send_message(chat_id, stats_text, parse_mode="HTML")
+        bot.send_message(
+            chat_id, 
+            stats_text, 
+            parse_mode="HTML",
+            message_thread_id=group.get("thread_id")
+        )
         bot.answer_callback_query(call.id)
 
     elif call.data == "manage_lessons":
