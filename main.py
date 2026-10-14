@@ -470,7 +470,7 @@ def start(message):
 
     group = get_group(chat_id)
 
-    # تصفير أسماء القائمة وإعادة فتحها للمجلس الجديد
+    # تفريغ وسائط القائمة لتنشئة قائمة خالية تماماً وتحديث حالة فتح القائمة
     group["readers"] = []
     group["listeners"] = []
     group["excused"] = []
@@ -478,7 +478,10 @@ def start(message):
     group["list_open"] = True
     group["thread_id"] = message.message_thread_id if message.is_topic_message else None
 
-    # إرسال القائمة الجديدة متوافقة مع الموضوع الفرعي (Topic) إن وجد
+    # حفظ القائمة المفرغة فوراً في قاعدة البيانات قبل توليد اللوحة
+    save_group(chat_id, group)
+
+    # إرسال القائمة الخالية الجديدة للمجلس مع مراعاة المواضيع الفرعية (Topics)
     sent = bot.send_message(
         message.chat.id,
         make_board(chat_id),
